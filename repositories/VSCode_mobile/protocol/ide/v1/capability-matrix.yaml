@@ -1,0 +1,857 @@
+schema_version: 1
+protocol_major: 1
+protocol_minor: 0
+minimum_compatible_protocol_minor: 0
+reserved_capabilities: [CAP_ZSTD_CHUNKS_V1]
+unknown_case: reject_before_side_effect
+capability_composition: union
+authorization_default: deny
+global_terminal_responses: [error]
+
+# Baseline lists only top-level oneof cases that do not require an optional
+# domain capability. Stateful/nested validation is defined below; a top-level
+# match alone never authorizes a side effect.
+baseline:
+  client_delivery: [hello]
+  client_control: [heartbeat, cancel_request, cancel_result_transfer]
+  client_request:
+    - workspace_command
+    - list_directory
+    - file_mutation
+    - search
+    - set_user_state
+    - operation_command
+  server_control: [hello, heartbeat, notification, progress, session_failure]
+  server_response:
+    - error
+    - list_directory
+    - file_mutation
+    - search_result
+    - operation
+
+client_control:
+  acknowledgements: [CAP_STATE_RESUME_V1]
+  snapshot_installed: [CAP_STATE_RESUME_V1]
+  request_snapshot: [CAP_STATE_RESUME_V1]
+  cancel_snapshot_transfer: [CAP_STATE_RESUME_V1]
+
+client_request:
+  open_document: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  close_document: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  edit_batch: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  document_command: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  lease_command: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+  workbench_context: [CAP_STATE_RESUME_V1, CAP_LANGUAGE_UI_V1, CAP_DOCUMENT_LEASE_V1]
+  execute_command: [CAP_LANGUAGE_UI_V1]
+  tree_view: [CAP_LANGUAGE_UI_V1]
+  quick_pick_page: [CAP_LANGUAGE_UI_V1]
+  language_request: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  terminal_command: [CAP_STATE_RESUME_V1, CAP_TERMINAL_V1, CAP_DOCUMENT_LEASE_V1]
+  scm_command: [CAP_STATE_RESUME_V1, CAP_SCM_V1]
+  scm_page: [CAP_STATE_RESUME_V1, CAP_SCM_V1]
+  debug_command: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+  debug_request: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1]
+  testing_command: [CAP_STATE_RESUME_V1, CAP_TESTING_V1, CAP_DOCUMENT_LEASE_V1]
+  testing_page: [CAP_STATE_RESUME_V1, CAP_TESTING_V1]
+  agent_command: [CAP_STATE_RESUME_V1, CAP_AGENT_V1]
+  get_agent_candidate: [CAP_AGENT_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+  task_command: [CAP_STATE_RESUME_V1, CAP_TASK_V1, CAP_DOCUMENT_LEASE_V1]
+  output_command: [CAP_STATE_RESUME_V1, CAP_OUTPUT_V1, CAP_DOCUMENT_LEASE_V1]
+  export_command: [CAP_STATE_RESUME_V1, CAP_EXPORT_V1]
+  workspace_edit_command: [CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+
+client_server_response:
+  ui: [CAP_LANGUAGE_UI_V1]
+
+server_response:
+  edit_ack: [CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+  lease_state: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+  execute_command: [CAP_LANGUAGE_UI_V1]
+  tree_view: [CAP_LANGUAGE_UI_V1]
+  quick_pick_page: [CAP_LANGUAGE_UI_V1]
+  language: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  scm_page: [CAP_STATE_RESUME_V1, CAP_SCM_V1]
+  debug: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1]
+  debug_evaluate: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+  testing_page: [CAP_STATE_RESUME_V1, CAP_TESTING_V1]
+  download_exchange: [CAP_EXPORT_V1]
+  command_accepted: []
+  snapshot_started: [CAP_STATE_RESUME_V1]
+  workspace_edit_applied: [CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+  result_transfer_started: []
+
+command_accepted_outcome:
+  completed:
+    inherit_initiating_request: true
+  operation_started:
+    inherit_initiating_request: true
+  terminal_created:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_TERMINAL_V1, CAP_DOCUMENT_LEASE_V1]
+  agent_task_started:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_AGENT_V1]
+  export_created:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_EXPORT_V1]
+  debug_session_started:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+  test_run_started:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_TESTING_V1, CAP_DOCUMENT_LEASE_V1]
+  task_started:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_TASK_V1, CAP_DOCUMENT_LEASE_V1]
+
+server_request:
+  ui: [CAP_LANGUAGE_UI_V1]
+
+server_control:
+  stream_reset: [CAP_STATE_RESUME_V1]
+  cancel_ui_request: [CAP_LANGUAGE_UI_V1]
+
+server_snapshot:
+  begin: [CAP_STATE_RESUME_V1]
+  chunk: [CAP_STATE_RESUME_V1]
+  end: [CAP_STATE_RESUME_V1]
+  aborted: [CAP_STATE_RESUME_V1]
+
+server_result_transfer:
+  begin: []
+  chunk: []
+  end: []
+  aborted: []
+
+server_event:
+  workspace: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+  document: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  lease: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+  contribution: [CAP_STATE_RESUME_V1, CAP_LANGUAGE_UI_V1]
+  tree_view: [CAP_STATE_RESUME_V1, CAP_LANGUAGE_UI_V1]
+  diagnostics: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  semantic_tokens: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  terminal: [CAP_STATE_RESUME_V1, CAP_TERMINAL_V1, CAP_DOCUMENT_LEASE_V1]
+  scm: [CAP_STATE_RESUME_V1, CAP_SCM_V1]
+  debug: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+  testing: [CAP_STATE_RESUME_V1, CAP_TESTING_V1]
+  agent: [CAP_STATE_RESUME_V1, CAP_AGENT_V1]
+  operation: [CAP_STATE_RESUME_V1]
+  export: [CAP_STATE_RESUME_V1, CAP_EXPORT_V1]
+  task: [CAP_STATE_RESUME_V1, CAP_TASK_V1]
+  output: [CAP_STATE_RESUME_V1, CAP_OUTPUT_V1]
+
+snapshot_payload:
+  workspace: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+  document: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  contributions: [CAP_STATE_RESUME_V1, CAP_LANGUAGE_UI_V1]
+  terminal: [CAP_STATE_RESUME_V1, CAP_TERMINAL_V1, CAP_DOCUMENT_LEASE_V1]
+  scm: [CAP_STATE_RESUME_V1, CAP_SCM_V1]
+  debug: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+  testing: [CAP_STATE_RESUME_V1, CAP_TESTING_V1]
+  agent: [CAP_STATE_RESUME_V1, CAP_AGENT_V1]
+  operation: [CAP_STATE_RESUME_V1]
+  export: [CAP_STATE_RESUME_V1, CAP_EXPORT_V1]
+  task: [CAP_STATE_RESUME_V1, CAP_TASK_V1]
+  output: [CAP_STATE_RESUME_V1, CAP_OUTPUT_V1]
+
+result_payload:
+  agent_candidate: [CAP_AGENT_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+  workspace_edit: [CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+
+# Every stream control, event and snapshot inherits the selected key's full
+# requirement. This is evaluated for each repeated cursor/ack independently.
+stream_key_capabilities:
+  workspace: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+  document: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+  terminal: [CAP_STATE_RESUME_V1, CAP_TERMINAL_V1, CAP_DOCUMENT_LEASE_V1]
+  agent: [CAP_STATE_RESUME_V1, CAP_AGENT_V1]
+  extension: [CAP_STATE_RESUME_V1, CAP_LANGUAGE_UI_V1]
+  operation: [CAP_STATE_RESUME_V1]
+  debug: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+  testing: [CAP_STATE_RESUME_V1, CAP_TESTING_V1]
+  scm: [CAP_STATE_RESUME_V1, CAP_SCM_V1]
+  export: [CAP_STATE_RESUME_V1, CAP_EXPORT_V1]
+  task: [CAP_STATE_RESUME_V1, CAP_TASK_V1]
+  output: [CAP_STATE_RESUME_V1, CAP_OUTPUT_V1]
+
+stream_control_inheritance:
+  ClientHello.resume_cursors: stream_key_capabilities_each
+  ServerHello.resume_plans: stream_key_capabilities_each
+  ClientControl.acknowledgements: stream_key_capabilities_each
+  ClientControl.snapshot_installed: stream_key_capabilities
+  ClientControl.request_snapshot: stream_key_capabilities
+  ClientControl.cancel_snapshot_transfer: active_snapshot_transfer_requirements
+  ServerControl.stream_reset: stream_key_capabilities
+  ServerEvent.meta.key: stream_key_capabilities
+  SnapshotTransferStarted.transfer.key: stream_key_capabilities_and_payload_kind
+  ServerSnapshot.meta.key: active_snapshot_transfer_requirements
+
+response_delivery_state_machine:
+  default:
+    sequence: [terminal]
+  search_result:
+    sequence: [zero_or_more_partial, exactly_one_terminal]
+  snapshot_started:
+    sequence: [exactly_one_terminal]
+    then: active_snapshot_transfer_by_snapshot_id
+  result_transfer_started:
+    sequence: [exactly_one_terminal]
+    then: active_result_transfer_by_transfer_id
+  error:
+    sequence: [exactly_one_terminal]
+  require:
+    - part_index_starts_at_zero_and_is_contiguous
+    - observed_workspace_generation_matches_request_incarnation
+    - no_response_after_terminal
+    - disconnect_or_generation_change_terminates_all_pending_requests
+
+# PublicError is additionally legal as the single terminal response to every
+# request. A response not listed for that initiating request is a protocol
+# violation even if both cases happen to require the same capabilities.
+request_response_closure:
+  workspace_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed, operation_started]
+  list_directory:
+    response_cases: [list_directory]
+  file_mutation:
+    response_cases: [file_mutation, command_accepted]
+    command_accepted_outcomes: [operation_started]
+  search:
+    response_cases: [search_result]
+  set_user_state:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed]
+  open_document:
+    response_cases: [snapshot_started]
+    snapshot_payload_kinds: [document]
+  close_document:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed]
+  edit_batch:
+    response_cases: [edit_ack]
+  document_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed, operation_started]
+  lease_command:
+    response_cases: [lease_state]
+  workbench_context:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed]
+  execute_command:
+    response_cases: [execute_command, command_accepted]
+    command_accepted_outcomes: [operation_started]
+  tree_view:
+    response_cases: [tree_view]
+  quick_pick_page:
+    response_cases: [quick_pick_page]
+  language_request:
+    response_cases: [language]
+    language_result_cases: [completion, hover, locations, workspace_edit, rename_prepare, code_actions, signature_help]
+  terminal_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed, terminal_created]
+  scm_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed, operation_started]
+  scm_page:
+    response_cases: [scm_page]
+  debug_command:
+    response_cases: [debug_evaluate, command_accepted]
+    command_accepted_outcomes: [completed, operation_started, debug_session_started]
+  debug_request:
+    response_cases: [debug]
+  testing_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed, test_run_started]
+  testing_page:
+    response_cases: [testing_page]
+  agent_command:
+    response_cases: [command_accepted, workspace_edit_applied]
+    command_accepted_outcomes: [completed, agent_task_started]
+  get_agent_candidate:
+    response_cases: [result_transfer_started]
+    result_payload_kinds: [agent_candidate]
+  task_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed, task_started]
+  output_command:
+    response_cases: [command_accepted]
+    command_accepted_outcomes: [completed]
+  operation_command:
+    response_cases: [operation, command_accepted]
+    command_accepted_outcomes: [completed]
+  export_command:
+    response_cases: [command_accepted, download_exchange]
+    command_accepted_outcomes: [completed, export_created]
+  workspace_edit_command:
+    response_cases: [result_transfer_started, workspace_edit_applied]
+    result_payload_kinds: [workspace_edit]
+
+# These branch-level rules narrow the request-level unions above. A branch may
+# never use another branch's response or typed creation outcome.
+nested_response_routes:
+  WorkspaceCommand.command:
+    start:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [operation_started]
+    stop:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [operation_started]
+    rename:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+  FileMutationCommand.command:
+    create_file:
+      response_cases: [file_mutation, command_accepted]
+      command_accepted_outcomes: [operation_started]
+    create_directory:
+      response_cases: [file_mutation, command_accepted]
+      command_accepted_outcomes: [operation_started]
+    rename:
+      response_cases: [file_mutation, command_accepted]
+      command_accepted_outcomes: [operation_started]
+    delete:
+      response_cases: [file_mutation, command_accepted]
+      command_accepted_outcomes: [operation_started]
+  DocumentCommand.command:
+    save:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [operation_started]
+    revert:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    set_language:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+  LeaseCommand.command:
+    acquire:
+      response_cases: [lease_state]
+    renew:
+      response_cases: [lease_state]
+    release:
+      response_cases: [lease_state]
+  TerminalCommand.command:
+    create:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [terminal_created]
+    attach:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    input:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    resize:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    close:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+  AgentCommand.command:
+    start:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [agent_task_started]
+    send_message:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    tool_approval:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    apply_candidate:
+      response_cases: [workspace_edit_applied]
+  TaskCommand.command:
+    run:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [task_started]
+    terminate:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+  OperationCommand.command:
+    get:
+      response_cases: [operation]
+    cancel:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+  ExportCommand.command:
+    create:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [export_created]
+    cancel:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    request_download:
+      response_cases: [download_exchange]
+  WorkspaceEditCommand.command:
+    get:
+      response_cases: [result_transfer_started]
+      result_payload_kinds: [workspace_edit]
+    apply:
+      response_cases: [workspace_edit_applied]
+  DebugCommand.command:
+    start:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [debug_session_started]
+    control:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed, operation_started]
+    evaluate:
+      response_cases: [debug_evaluate]
+  TestingCommand.action:
+    TEST_ACTION_KIND_DISCOVER:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    TEST_ACTION_KIND_RUN:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [test_run_started]
+    TEST_ACTION_KIND_DEBUG:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [test_run_started]
+    TEST_ACTION_KIND_CANCEL:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+  ScmCommand.action:
+    SCM_ACTION_KIND_REFRESH:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    SCM_ACTION_KIND_STAGE:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed, operation_started]
+    SCM_ACTION_KIND_UNSTAGE:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed, operation_started]
+    SCM_ACTION_KIND_DISCARD:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed, operation_started]
+    SCM_ACTION_KIND_COMMIT:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed, operation_started]
+  OutputCommand.action:
+    OUTPUT_ACTION_SHOW:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    OUTPUT_ACTION_HIDE:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+    OUTPUT_ACTION_CLEAR:
+      response_cases: [command_accepted]
+      command_accepted_outcomes: [completed]
+
+language_result_routes:
+  completion:
+    result_cases: [completion]
+  hover:
+    result_cases: [hover]
+  locations:
+    result_cases: [locations]
+  rename:
+    selector: RenameRequest.prepare_only
+    when_true: [rename_prepare]
+    when_false: [workspace_edit]
+  code_actions:
+    result_cases: [code_actions]
+  formatting:
+    result_cases: [workspace_edit]
+  signature_help:
+    result_cases: [signature_help]
+  continue_result:
+    result_cases: [inherit_continuation_token_result_family]
+    require: [token_session_principal_document_version_extension_generation_binding]
+  resolve_completion:
+    result_cases: [completion]
+    require: [opaque_handle_extension_generation_document_version_binding]
+  resolve_code_action:
+    result_cases: [code_actions]
+    require: [opaque_handle_extension_generation_document_version_binding]
+
+# Selectors use generated protobuf field paths. Every legal non-zero nested
+# branch/action must be present; unspecified, unknown and missing routes reject.
+nested_effect_routes:
+  WorkspaceCommand.command:
+    start: workspace_lifecycle
+    stop: workspace_lifecycle
+    rename: workspace_lifecycle
+  FileMutationCommand.command:
+    create_file: file_mutation
+    create_directory: file_mutation
+    rename: file_mutation
+    delete: file_mutation
+  DocumentCommand.command:
+    save: document_save
+    revert: document_mutation
+    set_language: document_mutation
+  LeaseCommand.command:
+    acquire: lease_mutation
+    renew: lease_mutation
+    release: lease_mutation
+  TerminalCommand.command:
+    create: terminal_create
+    attach: terminal_attach
+    input: terminal_input
+    resize: terminal_input
+    close: terminal_close
+  AgentCommand.command:
+    start: agent_run
+    send_message: agent_run
+    tool_approval: agent_approve
+    apply_candidate: agent_apply_candidate
+  TaskCommand.command:
+    run: task_run
+    terminate: task_terminate
+  OperationCommand.command:
+    get: operation_read
+    cancel: operation_cancel
+  ExportCommand.command:
+    create: export_create
+    cancel: export_cancel
+    request_download: export_download
+  WorkspaceEditCommand.command:
+    get: workspace_edit_read
+    apply: workspace_edit_apply
+  ScmCommand.action:
+    SCM_ACTION_KIND_REFRESH: scm_refresh
+    SCM_ACTION_KIND_STAGE: scm_mutation
+    SCM_ACTION_KIND_UNSTAGE: scm_mutation
+    SCM_ACTION_KIND_DISCARD: scm_mutation
+    SCM_ACTION_KIND_COMMIT: scm_mutation
+  DebugCommand.command:
+    start: debug_start
+    control: debug_control
+    evaluate: debug_evaluate
+  TestingCommand.action:
+    TEST_ACTION_KIND_DISCOVER: testing_discover
+    TEST_ACTION_KIND_RUN: testing_execute
+    TEST_ACTION_KIND_DEBUG: testing_execute
+    TEST_ACTION_KIND_CANCEL: testing_cancel
+  OutputCommand.action:
+    OUTPUT_ACTION_SHOW: output_command
+    OUTPUT_ACTION_HIDE: output_command
+    OUTPUT_ACTION_CLEAR: output_command
+
+lease_target_routes:
+  workbench:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_LEASE_V1]
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [owner_principal, eligible_controller_device]
+  document:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1, CAP_LANGUAGE_UI_V1]
+    permission_all: [PERMISSION_DOCUMENT_WRITE]
+    require: [document_visible_to_principal]
+  terminal:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_TERMINAL_V1, CAP_DOCUMENT_LEASE_V1]
+    permission_all: [PERMISSION_TERMINAL_INPUT]
+    require: [terminal_ownership]
+  debug:
+    capabilities: [CAP_STATE_RESUME_V1, CAP_DEBUG_V1, CAP_DOCUMENT_LEASE_V1]
+    permission_all: [PERMISSION_DEBUG_CONTROL]
+    require: [debug_session_ownership]
+
+control_state_machines:
+  cancel_request:
+    key: request_id
+    inherit: active_request_requirements
+    require:
+      - same_session_and_client_incarnation
+      - target_non_terminal
+      - cancel_and_terminal_response_one_winner
+      - original_request_still_receives_exactly_one_terminal_response
+      - unknown_or_foreign_request_rejected
+  cancel_snapshot_transfer:
+    key: snapshot_id
+    inherit: active_snapshot_transfer_requirements
+    require:
+      - same_session
+      - cancel_and_end_or_aborted_one_winner
+      - successful_cancel_emits_exactly_one_aborted
+      - unknown_or_foreign_transfer_rejected
+  cancel_result_transfer:
+    key: transfer_id
+    inherit: active_result_transfer_requirements
+    require:
+      - same_session_and_originating_request
+      - cancel_and_end_or_aborted_one_winner
+      - successful_cancel_emits_exactly_one_aborted
+      - unknown_or_foreign_transfer_rejected
+  ui_response:
+    key: [ui_request_id, extension_generation]
+    inherit: active_ui_request_requirements
+    require:
+      - same_selected_recipient_session
+      - ui_subtype_contracts
+      - response_cancel_timeout_disconnect_one_winner
+      - unknown_or_foreign_ui_request_rejected
+  cancel_ui_request:
+    key: [ui_request_id, extension_generation]
+    inherit: active_ui_request_requirements
+    require:
+      - server_is_request_owner
+      - cancel_response_timeout_disconnect_one_winner
+      - successful_cancel_finishes_extension_promise_once
+  quick_pick_page:
+    key: [ui_request_id, extension_generation, items_handle]
+    inherit: active_ui_request_requirements
+    require:
+      - active_ui_subtype_is_quick_pick
+      - same_selected_recipient_session
+      - exact_items_handle
+      - page_token_bound_to_ui_request_handle_generation_and_recipient
+      - unknown_or_foreign_ui_request_rejected
+
+direct_effect_routes:
+  set_user_state: user_state_write
+  open_document: document_open
+  close_document: document_close
+  edit_batch: document_edit
+  workbench_context: workbench_context
+  execute_command: execute_extension_command
+
+common_effect_requirements:
+  - authenticated_owner
+  - current_acl_revision
+  - command_meta
+  - expected_workspace_generation
+  - idempotency_principal_device_binding
+  - deadline_before_commit
+
+common_effect_exempt_guards: [operation_read, workspace_edit_read]
+
+common_request_requirements:
+  - authenticated_owner
+  - current_acl_revision
+  - expected_workspace_generation
+  - resource_visible_to_principal
+  - bounded_request
+  - request_deadline
+
+effect_guards:
+  workspace_lifecycle:
+    permission_all: [PERMISSION_WORKSPACE_MANAGE]
+    require: [desired_state_precondition, operation_commit_arbitration]
+  user_state_write:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [owner_principal, exact_revision]
+  file_mutation:
+    permission_any: [PERMISSION_WORKSPACE_MANAGE, PERMISSION_DOCUMENT_WRITE]
+    require: [exact_source_and_target_preconditions, workspace_mutation_barrier, lease_fence_for_open_dirty_documents]
+  document_open:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [canonical_workspace_path, set_semantics]
+  document_close:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [document_ownership, set_semantics]
+  document_edit:
+    permission_all: [PERMISSION_DOCUMENT_WRITE]
+    require: [document_lease, base_version, client_incarnation_sequence]
+  document_save:
+    permission_all: [PERMISSION_DOCUMENT_WRITE]
+    require: [exact_document_lease_epoch_at_admission_and_commit, exact_document_version, operation_commit_arbitration]
+  document_mutation:
+    permission_all: [PERMISSION_DOCUMENT_WRITE]
+    require: [exact_document_lease_epoch, exact_document_version]
+  lease_mutation:
+    require: [lease_target_routes, typed_target, owner_principal, lease_epoch_transition]
+  workbench_context:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [workbench_control_lease, client_context_sequence]
+  execute_extension_command:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [extension_generation, trusted_command_policy_registry, expected_policy_digest, dynamic_policy_capability_union, dynamic_policy_permission_union, deny_unclassified_command, workspace_trust_if_policy_requires, exact_workbench_control_lease_epoch_if_policy_requires]
+  terminal_create:
+    permission_all: [PERMISSION_TERMINAL_CREATE]
+    require: [workspace_trust, workbench_control_lease]
+  terminal_attach:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [terminal_ownership, set_semantics]
+  terminal_input:
+    permission_all: [PERMISSION_TERMINAL_INPUT]
+    require: [terminal_input_lease]
+  terminal_close:
+    permission_all: [PERMISSION_TERMINAL_INPUT]
+    require: [terminal_input_lease, operation_commit_arbitration]
+  scm_refresh:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [workspace_trust, exact_scm_revision]
+  scm_mutation:
+    permission_all: [PERMISSION_WORKSPACE_MANAGE]
+    require: [workspace_trust, exact_scm_revision, workspace_mutation_barrier]
+  debug_start:
+    permission_all: [PERMISSION_DEBUG_CONTROL]
+    require: [workspace_trust, workbench_control_lease]
+  debug_control:
+    permission_all: [PERMISSION_DEBUG_CONTROL]
+    require: [workspace_trust, debug_control_lease, stop_epoch, operation_commit_arbitration]
+  debug_evaluate:
+    permission_all: [PERMISSION_DEBUG_CONTROL]
+    require: [workspace_trust, debug_control_lease, stop_epoch, state_revision]
+  testing_discover:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [workspace_trust, workbench_control_lease]
+  testing_execute:
+    permission_all: [PERMISSION_TASK_RUN]
+    require: [workspace_trust, workbench_control_lease, operation_commit_arbitration]
+  testing_cancel:
+    permission_all: [PERMISSION_TASK_RUN]
+    require: [workspace_trust, workbench_control_lease, test_run_ownership, operation_commit_arbitration]
+  agent_run:
+    permission_all: [PERMISSION_AGENT_RUN]
+    require: [workspace_trust, bounded_context]
+  agent_approve:
+    permission_all: [PERMISSION_AGENT_APPROVE]
+    require: [exact_arguments_digest, risk_set, lease_fence_per_target, approval_ttl]
+  agent_apply_candidate:
+    capabilities: [CAP_AGENT_V1, CAP_DOCUMENT_EDIT_V1, CAP_DOCUMENT_LEASE_V1]
+    permission_all: [PERMISSION_AGENT_APPROVE, PERMISSION_DOCUMENT_WRITE]
+    require: [candidate_digest, candidate_ttl, lease_fence_per_target, exact_resource_preconditions, workspace_mutation_barrier]
+  task_run:
+    permission_all: [PERMISSION_TASK_RUN]
+    require: [workspace_trust, workbench_control_lease]
+  task_terminate:
+    permission_all: [PERMISSION_TASK_RUN]
+    require: [workspace_trust, workbench_control_lease, task_ownership, operation_commit_arbitration]
+  output_command:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [workbench_control_lease, channel_ownership]
+  operation_read:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [operation_visible_to_principal]
+  operation_cancel:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [operation_owner_or_kind_permission, expected_operation_revision, operation_commit_arbitration]
+  export_create:
+    permission_all: [PERMISSION_EXPORT]
+    require: [volume_operation_lock, operation_commit_arbitration]
+  export_cancel:
+    permission_all: [PERMISSION_EXPORT]
+    require: [export_ownership, operation_commit_arbitration]
+  export_download:
+    permission_all: [PERMISSION_EXPORT]
+    require: [export_ownership, published_artifact, fresh_acl_revision, one_time_exchange]
+  workspace_edit_read:
+    permission_all: [PERMISSION_WORKSPACE_READ]
+    require: [candidate_principal_device_binding, candidate_digest, candidate_ttl]
+  workspace_edit_apply:
+    permission_all: [PERMISSION_DOCUMENT_WRITE]
+    require: [candidate_principal_device_binding, candidate_digest, candidate_ttl, lease_fence_per_target, exact_resource_preconditions, workspace_mutation_barrier]
+
+ui_subtype_contracts:
+  quick_pick:
+    response_outcomes: [quick_pick, cancelled]
+    routing: [UI_ROUTING_POLICY_ORIGIN_CLIENT, UI_ROUTING_POLICY_WORKBENCH_CONTROLLER, UI_ROUTING_POLICY_FIRST_APPROVER]
+  input_box:
+    response_outcomes: [input_box, cancelled]
+    routing: [UI_ROUTING_POLICY_ORIGIN_CLIENT, UI_ROUTING_POLICY_WORKBENCH_CONTROLLER, UI_ROUTING_POLICY_FIRST_APPROVER]
+  show_message:
+    response_outcomes: [show_message, cancelled]
+    routing: [UI_ROUTING_POLICY_ORIGIN_CLIENT, UI_ROUTING_POLICY_WORKBENCH_CONTROLLER, UI_ROUTING_POLICY_ALL_AUTHORIZED, UI_ROUTING_POLICY_FIRST_APPROVER]
+  open_uri:
+    response_outcomes: [open_uri, cancelled]
+    routing: [UI_ROUTING_POLICY_ORIGIN_CLIENT, UI_ROUTING_POLICY_WORKBENCH_CONTROLLER]
+    require: [foreground_device_session, uri_allowlist]
+  dialog:
+    response_outcomes: [dialog, cancelled]
+    routing: [UI_ROUTING_POLICY_ORIGIN_CLIENT, UI_ROUTING_POLICY_WORKBENCH_CONTROLLER, UI_ROUTING_POLICY_FIRST_APPROVER]
+  clipboard:
+    response_outcomes: [clipboard, cancelled]
+    routing: [UI_ROUTING_POLICY_WORKBENCH_CONTROLLER]
+    permission_all: [PERMISSION_DEVICE_CLIPBOARD]
+    require: [foreground_device_session]
+  progress:
+    response_outcomes: [progress, cancelled]
+    routing: [UI_ROUTING_POLICY_ORIGIN_CLIENT, UI_ROUTING_POLICY_WORKBENCH_CONTROLLER]
+
+snapshot_key_payload_identity:
+  workspace: workspace
+  document: document
+  extension: contributions
+  terminal: terminal
+  scm: scm
+  debug: debug
+  testing: testing
+  agent: agent
+  operation: operation
+  export: export
+  task: task
+  output: output
+
+lease_identity_contracts:
+  ServerResponse.lease_state:
+    require:
+      - response_initiating_request_is_lease_command
+      - response_target_branch_and_uuid_equal_request_target
+      - recompute_capabilities_from_lease_target_routes
+  WorkspaceSnapshot.workbench_control_lease:
+    target_branch: workbench
+    target_uuid_equals: [SnapshotTransferMeta.key.workspace.workspace_id, WorkspaceSnapshot.workspace_id]
+  DocumentSnapshotPayload.write_lease:
+    target_branch: document
+    target_uuid_equals: [SnapshotTransferMeta.key.document.document_id, DocumentSnapshotPayload.document.document_id]
+  TerminalSnapshot.input_lease:
+    target_branch: terminal
+    target_uuid_equals: [SnapshotTransferMeta.key.terminal.terminal_id, TerminalSnapshot.terminal.terminal_id]
+  DebugSnapshot.control_lease:
+    target_branch: debug
+    target_uuid_equals: [SnapshotTransferMeta.key.debug.debug_session_id, DebugSnapshot.debug_session_id]
+  ServerEvent.lease:
+    require:
+      - lease_target_branch_matches_stream_key_branch
+      - lease_target_uuid_equals_stream_key_uuid
+      - event_payload_identity
+      - recompute_capabilities_from_lease_target_routes
+
+event_key_payload_identity:
+  workspace: workspace
+  document: document
+  contribution: extension
+  tree_view: extension
+  diagnostics: document
+  semantic_tokens: document
+  terminal: terminal
+  scm: scm
+  debug: debug
+  testing: testing
+  agent: agent
+  operation: operation
+  export: export
+  task: task
+  output: output
+  lease:
+    workbench: workspace
+    document: document
+    terminal: terminal
+    debug: debug
+
+transfer_state_machines:
+  snapshot:
+    creation_sources:
+      - ServerHello.resume_plans.snapshot
+      - ServerResponse.snapshot_started
+      - ClientControl.request_snapshot_then_first_begin
+      - ServerControl.stream_reset_then_first_begin
+    require:
+      - unique_snapshot_id_per_session
+      - stream_key_capabilities
+      - snapshot_payload_capabilities
+      - snapshot_key_payload_identity
+      - started_kind_equals_begin_kind_equals_decoded_payload_branch
+      - start_response_is_terminal_when_present
+      - key_generation_high_watermark_constant_on_all_parts
+      - contiguous_part_index_and_uncompressed_offset
+      - one_terminal_end_or_aborted
+      - chunks_inherit_started_requirements
+      - install_only_after_end_digest_verification
+      - installed_tuple_exactly_matches_active_transfer
+      - abort_never_advances_stream_frontier
+  result:
+    creation_sources:
+      get_agent_candidate: agent_candidate
+      workspace_edit_command_get: workspace_edit
+    require:
+      - unique_transfer_id_per_session
+      - request_response_closure
+      - result_payload_capabilities
+      - started_kind_equals_begin_kind_equals_decoded_payload_branch
+      - start_response_is_terminal
+      - contiguous_part_index_and_uncompressed_offset
+      - one_terminal_end_or_aborted
+      - cancel_uses_control_state_machines.cancel_result_transfer
+      - cancel_end_aborted_exactly_one_winner
+      - chunks_inherit_started_requirements
+      - no_stream_key_generation_cursor_or_snapshot_installed
+
+compression:
+  SNAPSHOT_COMPRESSION_NONE: []
+  SNAPSHOT_COMPRESSION_ZSTD: [CAP_ZSTD_CHUNKS_V1]

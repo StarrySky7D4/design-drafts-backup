@@ -1,0 +1,3094 @@
+syntax = "proto3";
+
+package remote_ide.ide.v1;
+
+// Public Flutter <-> IDE Control Plane protocol draft.
+//
+// Wire invariants not expressible in proto3 are mandatory in every generated
+// language's handwritten validator:
+// - Uuid.value is exactly 16 bytes and has the UUID version required by the
+//   registry. Empty/nil IDs are rejected wherever the field is required.
+// - Every count, string, bytes field and nesting level is budgeted before
+//   allocation. See Knowledge/PROTOCOL_REGISTRY.md.
+// - ClientFrame and ServerFrame are direction-specific. request_id correlates
+//   a short request; CommandMeta.idempotency_key deduplicates side effects.
+// - Frame.delivery is exclusive routing: responses, replayable events,
+//   snapshots, server requests and controls are never combined.
+// - Stream cursors are per typed StreamKey. Cursor 0 means "no cursor"; emitted
+//   event cursors start at 1 and are strictly increasing within generation.
+// - TextEdit ranges all refer to EditBatch.base_version, are sorted ascending,
+//   are non-overlapping, and are applied atomically (implementation applies
+//   validated ranges from end to start).
+// - Terminal bytes are raw PTY bytes. Chunks need not end on UTF-8 boundaries.
+// - Snapshot chunks encode one deterministic SnapshotPayload, are independently
+//   compressed, and never consume a replayable event cursor.
+
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Common primitives
+// ---------------------------------------------------------------------------
+
+message Uuid {
+  bytes value = 1;
+}
+
+enum DigestAlgorithm {
+  DIGEST_ALGORITHM_UNSPECIFIED = 0;
+  DIGEST_ALGORITHM_SHA256 = 1;
+}
+
+message Digest {
+  DigestAlgorithm algorithm = 1;
+  bytes value = 2;
+}
+
+message Position {
+  uint32 line = 1;
+  uint32 utf16_column = 2;
+}
+
+message Range {
+  Position start = 1;
+  Position end = 2;
+}
+
+message WorkspacePath {
+  // Canonical UTF-8, slash-separated path relative to the workspace root.
+  string value = 1;
+}
+
+message Location {
+  Uuid document_id = 1;
+  WorkspacePath path = 2;
+  Range range = 3;
+}
+
+enum NullValue {
+  NULL_VALUE_UNSPECIFIED = 0;
+  NULL_VALUE_PRESENT = 1;
+}
+
+message ListValue {
+  repeated Value values = 1;
+}
+
+message ObjectField {
+  // Keys must be unique. Canonical encoders sort by UTF-8 key bytes.
+  string key = 1;
+  Value value = 2;
+}
+
+message ObjectValue {
+  repeated ObjectField fields = 1;
+}
+
+message Value {
+  oneof kind {
+    NullValue null_value = 1;
+    bool bool_value = 2;
+    sint64 int_value = 3;
+    double double_value = 4;
+    string string_value = 5;
+    bytes bytes_value = 6;
+    ListValue list_value = 7;
+    ObjectValue object_value = 8;
+    WorkspacePath path_value = 9;
+    Position position_value = 10;
+    Range range_value = 11;
+    Location location_value = 12;
+  }
+}
+
+message CommandMeta {
+  // UUIDv4. Required for every command that can have a side effect.
+  Uuid idempotency_key = 1;
+  int64 deadline_unix_ms = 2;
+  // Rejects delayed commands after a workspace/Execution rebuild.
+  uint64 expected_workspace_generation = 3;
+}
+
+message CommandCompleted {
+  bool changed = 1;
+}
+
+message OperationStarted {
+  Uuid operation_id = 1;
+}
+
+message TerminalCreated {
+  Uuid terminal_id = 1;
+  Uuid operation_id = 2;
+}
+
+message AgentTaskStarted {
+  Uuid agent_task_id = 1;
+  Uuid operation_id = 2;
+}
+
+message ExportCreated {
+  Uuid export_id = 1;
+  Uuid operation_id = 2;
+}
+
+message DebugSessionStarted {
+  Uuid debug_session_id = 1;
+  Uuid operation_id = 2;
+}
+
+message TestRunStarted {
+  Uuid test_run_id = 1;
+  Uuid operation_id = 2;
+}
+
+message TaskStarted {
+  Uuid task_id = 1;
+  Uuid operation_id = 2;
+  Uuid terminal_id = 3;
+}
+
+message CommandAccepted {
+  // Exactly one typed outcome is required. Resource-creating commands must
+  // return their stable identity here; operation_id alone is insufficient.
+  Uuid idempotency_key = 1;
+  oneof outcome {
+    CommandCompleted completed = 2;
+    OperationStarted operation_started = 3;
+    TerminalCreated terminal_created = 4;
+    AgentTaskStarted agent_task_started = 5;
+    ExportCreated export_created = 6;
+    DebugSessionStarted debug_session_started = 7;
+    TestRunStarted test_run_started = 8;
+    TaskStarted task_started = 9;
+  }
+}
+
+message PageInfo {
+  bytes next_page_token = 1;
+  bool truncated = 2;
+}
+
+message SafeDetail {
+  string key = 1;
+  string value = 2;
+}
+
+enum ErrorCategory {
+  ERROR_CATEGORY_UNSPECIFIED = 0;
+  ERROR_CATEGORY_CLIENT = 1;
+  ERROR_CATEGORY_AUTH = 2;
+  ERROR_CATEGORY_DOMAIN = 3;
+  ERROR_CATEGORY_STATE = 4;
+  ERROR_CATEGORY_AVAILABILITY = 5;
+  ERROR_CATEGORY_COMPATIBILITY = 6;
+  ERROR_CATEGORY_RESOURCE = 7;
+  ERROR_CATEGORY_TIMEOUT = 8;
+  ERROR_CATEGORY_CANCELLATION = 9;
+  ERROR_CATEGORY_STORAGE = 10;
+  ERROR_CATEGORY_INTERNAL = 11;
+}
+
+message PublicError {
+  // Stable snake_case code from Knowledge/PROTOCOL_REGISTRY.md.
+  string code = 1;
+  ErrorCategory category = 2;
+  bool retryable = 3;
+  uint64 retry_after_ms = 4;
+  Uuid operation_id = 5;
+  repeated SafeDetail safe_details = 6;
+  string localized_fallback = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Session, capabilities and stream recovery
+// ---------------------------------------------------------------------------
+
+enum ClientPlatform {
+  CLIENT_PLATFORM_UNSPECIFIED = 0;
+  CLIENT_PLATFORM_ANDROID = 1;
+  CLIENT_PLATFORM_IOS = 2;
+  CLIENT_PLATFORM_WINDOWS = 3;
+  CLIENT_PLATFORM_MACOS = 4;
+  CLIENT_PLATFORM_LINUX = 5;
+}
+
+enum Capability {
+  CAP_UNSPECIFIED = 0;
+  CAP_DOCUMENT_EDIT_V1 = 1;
+  CAP_STATE_RESUME_V1 = 2;
+  CAP_DOCUMENT_LEASE_V1 = 3;
+  CAP_LANGUAGE_UI_V1 = 4;
+  CAP_TERMINAL_V1 = 5;
+  CAP_SCM_V1 = 6;
+  CAP_DEBUG_V1 = 7;
+  CAP_TESTING_V1 = 8;
+  CAP_AGENT_V1 = 9;
+  CAP_EXPORT_V1 = 10;
+  CAP_ZSTD_CHUNKS_V1 = 11;
+  CAP_TASK_V1 = 12;
+  CAP_OUTPUT_V1 = 13;
+  reserved 14 to 63;
+}
+
+enum Permission {
+  PERMISSION_UNSPECIFIED = 0;
+  PERMISSION_WORKSPACE_READ = 1;
+  PERMISSION_WORKSPACE_MANAGE = 2;
+  PERMISSION_DOCUMENT_WRITE = 3;
+  PERMISSION_TERMINAL_CREATE = 4;
+  PERMISSION_TERMINAL_INPUT = 5;
+  PERMISSION_TASK_RUN = 6;
+  PERMISSION_DEBUG_CONTROL = 7;
+  PERMISSION_AGENT_RUN = 8;
+  PERMISSION_AGENT_APPROVE = 9;
+  PERMISSION_EXPORT = 10;
+  PERMISSION_ADMIN = 11;
+  PERMISSION_DEVICE_CLIPBOARD = 12;
+  reserved 13 to 63;
+}
+
+message WorkspaceStreamKey {
+  Uuid workspace_id = 1;
+}
+
+message DocumentStreamKey {
+  Uuid document_id = 1;
+}
+
+message TerminalStreamKey {
+  Uuid terminal_id = 1;
+}
+
+message AgentStreamKey {
+  Uuid agent_task_id = 1;
+}
+
+message ExtensionStreamKey {
+  Uuid workspace_id = 1;
+}
+
+message OperationStreamKey {
+  Uuid operation_id = 1;
+}
+
+message DebugStreamKey {
+  Uuid debug_session_id = 1;
+}
+
+message TestingStreamKey {
+  Uuid test_controller_id = 1;
+}
+
+message ScmStreamKey {
+  Uuid scm_provider_id = 1;
+}
+
+message ExportStreamKey {
+  Uuid export_id = 1;
+}
+
+message TaskStreamKey {
+  Uuid task_id = 1;
+}
+
+message OutputStreamKey {
+  Uuid output_channel_id = 1;
+}
+
+message StreamKey {
+  oneof key {
+    WorkspaceStreamKey workspace = 1;
+    DocumentStreamKey document = 2;
+    TerminalStreamKey terminal = 3;
+    AgentStreamKey agent = 4;
+    ExtensionStreamKey extension = 5;
+    OperationStreamKey operation = 6;
+    DebugStreamKey debug = 7;
+    TestingStreamKey testing = 8;
+    ScmStreamKey scm = 9;
+    ExportStreamKey export = 10;
+    TaskStreamKey task = 11;
+    OutputStreamKey output = 12;
+  }
+}
+
+message StreamCursor {
+  StreamKey key = 1;
+  uint64 generation = 2;
+  uint64 cursor = 3;
+}
+
+message StreamAck {
+  StreamKey key = 1;
+  uint64 generation = 2;
+  uint64 acknowledged_cursor = 3;
+}
+
+message StreamEventMeta {
+  StreamKey key = 1;
+  uint64 generation = 2;
+  // Independent event sequence. It is never a document version, terminal byte
+  // offset, extension generation or operation state revision.
+  uint64 cursor = 3;
+  // Causal canonical document version for derived data; zero if not relevant.
+  uint64 causal_document_version = 4;
+}
+
+message SnapshotTransferMeta {
+  // Snapshot frames never consume event cursors. All parts carry this same
+  // transfer identity; the client installs only after validating the terminal
+  // part/hash, then sends SnapshotInstalled.
+  StreamKey key = 1;
+  uint64 generation = 2;
+  Uuid snapshot_id = 3;
+  uint64 high_watermark_inclusive = 4;
+}
+
+enum SnapshotPayloadKind {
+  SNAPSHOT_PAYLOAD_KIND_UNSPECIFIED = 0;
+  SNAPSHOT_PAYLOAD_KIND_WORKSPACE = 1;
+  SNAPSHOT_PAYLOAD_KIND_DOCUMENT = 2;
+  SNAPSHOT_PAYLOAD_KIND_CONTRIBUTIONS = 3;
+  SNAPSHOT_PAYLOAD_KIND_TERMINAL = 4;
+  SNAPSHOT_PAYLOAD_KIND_SCM = 5;
+  SNAPSHOT_PAYLOAD_KIND_DEBUG = 6;
+  SNAPSHOT_PAYLOAD_KIND_TESTING = 7;
+  SNAPSHOT_PAYLOAD_KIND_AGENT = 8;
+  reserved 9;
+  SNAPSHOT_PAYLOAD_KIND_OPERATION = 10;
+  SNAPSHOT_PAYLOAD_KIND_EXPORT = 11;
+  SNAPSHOT_PAYLOAD_KIND_TASK = 12;
+  SNAPSHOT_PAYLOAD_KIND_OUTPUT = 13;
+  reserved 14;
+}
+
+message SnapshotBegin {
+  // payload_digest covers the exact complete uncompressed SnapshotPayload
+  // bytes emitted on the wire; clients verify bytes before parsing and never
+  // reserialize to verify the digest.
+  uint32 payload_schema_version = 1;
+  SnapshotCompression compression = 2;
+  uint64 uncompressed_size_bytes = 3;
+  uint32 part_count = 4;
+  Digest payload_digest = 5;
+  SnapshotPayloadKind payload_kind = 6;
+}
+
+message SnapshotChunk {
+  uint32 part_index = 1;
+  uint64 uncompressed_offset = 2;
+  uint32 uncompressed_length = 3;
+  // Every chunk is independently compressed according to SnapshotBegin.
+  // part_digest covers its uncompressed slice. Indices and offsets are
+  // contiguous, non-overlapping and must exactly cover the declared size.
+  bytes data = 4;
+  Digest part_digest = 5;
+}
+
+message SnapshotEnd {
+  uint32 part_count = 1;
+  Digest payload_digest = 2;
+}
+
+message SnapshotAborted {
+  PublicError error = 1;
+}
+
+message SnapshotTransferStarted {
+  // This is the terminal response to a request that initiated a stream
+  // snapshot. Later parts route only by snapshot_id and are not request parts.
+  SnapshotTransferMeta transfer = 1;
+  SnapshotPayloadKind payload_kind = 2;
+}
+
+enum ResultPayloadKind {
+  RESULT_PAYLOAD_KIND_UNSPECIFIED = 0;
+  RESULT_PAYLOAD_KIND_AGENT_CANDIDATE = 1;
+  RESULT_PAYLOAD_KIND_WORKSPACE_EDIT = 2;
+}
+
+message ResultTransferMeta {
+  Uuid transfer_id = 1;
+}
+
+message ResultBegin {
+  // Digest covers the exact complete uncompressed ResultPayload wire bytes.
+  ResultPayloadKind payload_kind = 1;
+  uint32 payload_schema_version = 2;
+  SnapshotCompression compression = 3;
+  uint64 uncompressed_size_bytes = 4;
+  uint32 part_count = 5;
+  Digest payload_digest = 6;
+}
+
+message ResultChunk {
+  uint32 part_index = 1;
+  uint64 uncompressed_offset = 2;
+  uint32 uncompressed_length = 3;
+  bytes data = 4;
+  Digest part_digest = 5;
+}
+
+message ResultEnd {
+  uint32 part_count = 1;
+  Digest payload_digest = 2;
+}
+
+message ResultAborted {
+  PublicError error = 1;
+}
+
+message ResultTransferStarted {
+  // Terminal response to the initiating request. Later parts route only by
+  // transfer_id and never affect any stream acknowledgement/high-watermark.
+  ResultTransferMeta transfer = 1;
+  ResultPayloadKind payload_kind = 2;
+}
+
+message SnapshotInstalled {
+  StreamKey key = 1;
+  uint64 generation = 2;
+  Uuid snapshot_id = 3;
+  uint64 high_watermark_inclusive = 4;
+  Digest installed_digest = 5;
+}
+
+message RequestStreamSnapshot {
+  StreamKey key = 1;
+  uint64 expected_generation = 2;
+}
+
+message StreamAcknowledgements {
+  repeated StreamAck acknowledgements = 1;
+}
+
+message ReplayResumePlan {
+  uint64 selected_generation = 1;
+  uint64 first_replay_cursor_inclusive = 2;
+  uint64 high_watermark_inclusive = 3;
+  uint64 first_live_cursor_inclusive = 4;
+}
+
+message SnapshotResumePlan {
+  uint64 selected_generation = 1;
+  uint64 high_watermark_inclusive = 2;
+  uint64 first_live_cursor_inclusive = 3;
+  Uuid snapshot_id = 4;
+}
+
+message UnavailableResumePlan {
+  PublicError reason = 1;
+}
+
+message PermissionDeniedResumePlan {
+  uint64 permission_revision = 1;
+  PublicError reason = 2;
+}
+
+message ResumePlan {
+  StreamKey key = 1;
+  uint64 requested_generation = 2;
+  uint64 requested_cursor = 3;
+  oneof plan {
+    ReplayResumePlan replay = 4;
+    SnapshotResumePlan snapshot = 5;
+    UnavailableResumePlan unavailable = 6;
+    PermissionDeniedResumePlan permission_denied = 7;
+  }
+}
+
+enum StreamResetReason {
+  STREAM_RESET_REASON_UNSPECIFIED = 0;
+  STREAM_RESET_REASON_HISTORY_COMPACTED = 1;
+  STREAM_RESET_REASON_GENERATION_CHANGED = 2;
+  STREAM_RESET_REASON_SLOW_CONSUMER = 3;
+  STREAM_RESET_REASON_PERMISSION_CHANGED = 4;
+  STREAM_RESET_REASON_DATA_REPAIRED = 5;
+}
+
+message StreamReset {
+  StreamKey key = 1;
+  uint64 new_generation = 2;
+  StreamResetReason reason = 3;
+  oneof recovery {
+    uint64 replay_from_cursor_inclusive = 4;
+    bool snapshot_required = 5;
+    PublicError stream_closed = 6;
+  }
+}
+
+message ClientHello {
+  uint32 protocol_major = 1;
+  uint32 protocol_minor = 2;
+  string client_build = 3;
+  ClientPlatform platform = 4;
+  Uuid device_id = 5;
+  Uuid client_instance_id = 6;
+  Uuid requested_workspace_id = 7;
+  Uuid challenge_id = 8;
+  bytes challenge_signature = 9;
+  repeated Capability required_capabilities = 10;
+  repeated Capability optional_capabilities = 11;
+  repeated StreamCursor resume_cursors = 12;
+  string locale = 13;
+  string time_zone = 14;
+}
+
+message PermissionSnapshot {
+  uint64 revision = 1;
+  repeated Permission granted = 2;
+}
+
+message HeartbeatPolicy {
+  uint32 interval_ms = 1;
+  uint32 timeout_ms = 2;
+  uint32 max_missed = 3;
+}
+
+message ServerHello {
+  uint32 selected_protocol_major = 1;
+  uint32 selected_protocol_minor = 2;
+  string server_build = 3;
+  Uuid session_id = 4;
+  Uuid workspace_id = 5;
+  uint64 workspace_generation = 6;
+  string runtime_release = 7;
+  repeated Capability enabled_capabilities = 8;
+  HeartbeatPolicy heartbeat = 9;
+  uint32 max_frame_bytes = 10;
+  PermissionSnapshot permissions = 11;
+  repeated ResumePlan resume_plans = 12;
+  uint64 server_unix_ms = 13;
+}
+
+message Heartbeat {
+  uint64 nonce = 1;
+  uint64 sender_unix_ms = 2;
+}
+
+message CancelRequest {
+  // Cancels only a non-terminal short request. Long work uses OperationCommand.
+  Uuid request_id = 1;
+}
+
+message CancelSnapshotTransfer {
+  Uuid snapshot_id = 1;
+}
+
+message CancelResultTransfer {
+  Uuid transfer_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace lifecycle, file tree and search
+// ---------------------------------------------------------------------------
+
+enum WorkspaceState {
+  WORKSPACE_STATE_UNSPECIFIED = 0;
+  WORKSPACE_STATE_STOPPED = 1;
+  WORKSPACE_STATE_STARTING = 2;
+  WORKSPACE_STATE_READY = 3;
+  WORKSPACE_STATE_DEGRADED = 4;
+  WORKSPACE_STATE_STOPPING = 5;
+  WORKSPACE_STATE_FAILED = 6;
+  WORKSPACE_STATE_MAINTENANCE = 7;
+}
+
+message WorkspaceSnapshot {
+  Uuid workspace_id = 1;
+  uint64 workspace_generation = 2;
+  WorkspaceState state = 3;
+  string display_name = 4;
+  string runtime_release = 5;
+  uint64 workspace_sequence = 6;
+  PermissionSnapshot permissions = 7;
+  bool execution_ready = 8;
+  PublicError degraded_reason = 9;
+  repeated UserWorkspaceStateEntry user_workspace_state = 10;
+  LeaseState workbench_control_lease = 11;
+}
+
+message StartWorkspace {
+  CommandMeta meta = 1;
+}
+
+message StopWorkspace {
+  CommandMeta meta = 1;
+  bool force_after_deadline = 2;
+}
+
+message RenameWorkspace {
+  CommandMeta meta = 1;
+  string display_name = 2;
+}
+
+message WorkspaceCommand {
+  oneof command {
+    StartWorkspace start = 1;
+    StopWorkspace stop = 2;
+    RenameWorkspace rename = 3;
+  }
+}
+
+message WorkspaceLifecycleChanged {
+  WorkspaceState previous = 1;
+  WorkspaceState current = 2;
+  uint64 workspace_generation = 3;
+  PublicError reason = 4;
+}
+
+message PermissionChanged {
+  PermissionSnapshot current = 1;
+  string reason = 2;
+}
+
+message WorkspaceEvent {
+  oneof event {
+    WorkspaceLifecycleChanged lifecycle = 1;
+    PermissionChanged permission = 2;
+    FileChangeSet files = 3;
+    UserWorkspaceStateChanged user_state = 4;
+  }
+  // Explicit payload identity; validators must compare it with
+  // StreamEventMeta.key.workspace.workspace_id on every frame.
+  Uuid workspace_id = 5;
+}
+
+enum FileKind {
+  FILE_KIND_UNSPECIFIED = 0;
+  FILE_KIND_REGULAR = 1;
+  FILE_KIND_DIRECTORY = 2;
+  FILE_KIND_SYMLINK = 3;
+  FILE_KIND_OTHER = 4;
+}
+
+message FileEntry {
+  WorkspacePath path = 1;
+  FileKind kind = 2;
+  uint64 size_bytes = 3;
+  int64 modified_unix_ms = 4;
+  bool executable = 5;
+  bool hidden = 6;
+  uint64 metadata_revision = 7;
+}
+
+message ListDirectoryRequest {
+  WorkspacePath directory = 1;
+  uint32 page_size = 2;
+  bytes page_token = 3;
+  bool include_hidden = 4;
+}
+
+message ListDirectoryResponse {
+  WorkspacePath directory = 1;
+  repeated FileEntry entries = 2;
+  bytes next_page_token = 3;
+  uint64 workspace_sequence = 4;
+}
+
+enum FileChangeKind {
+  FILE_CHANGE_KIND_UNSPECIFIED = 0;
+  FILE_CHANGE_KIND_CREATED = 1;
+  FILE_CHANGE_KIND_MODIFIED = 2;
+  FILE_CHANGE_KIND_DELETED = 3;
+  FILE_CHANGE_KIND_RENAMED = 4;
+}
+
+message FileChange {
+  FileChangeKind kind = 1;
+  WorkspacePath path = 2;
+  WorkspacePath previous_path = 3;
+  FileEntry current = 4;
+}
+
+message FileChangeSet {
+  repeated FileChange changes = 1;
+}
+
+message FilePrecondition {
+  // Exactly one branch is required for every destructive mutation. A true
+  // must_not_exist is the only legal bool encoding.
+  oneof expected {
+    bool must_not_exist = 1;
+    uint64 exact_metadata_revision = 2;
+    Digest exact_content_digest = 3;
+  }
+}
+
+message CreateFile {
+  CommandMeta meta = 1;
+  WorkspacePath path = 2;
+  bool overwrite = 3;
+  FilePrecondition target_precondition = 4;
+  repeated LeaseFence lease_fences = 5;
+  bytes bounded_initial_content = 6;
+}
+
+message CreateDirectory {
+  CommandMeta meta = 1;
+  WorkspacePath path = 2;
+  FilePrecondition target_precondition = 3;
+}
+
+message RenamePath {
+  CommandMeta meta = 1;
+  WorkspacePath from = 2;
+  WorkspacePath to = 3;
+  bool overwrite = 4;
+  FilePrecondition source_precondition = 5;
+  FilePrecondition target_precondition = 6;
+  repeated LeaseFence lease_fences = 7;
+}
+
+message DeletePath {
+  CommandMeta meta = 1;
+  WorkspacePath path = 2;
+  bool recursive = 3;
+  bool use_recoverable_trash = 4;
+  FilePrecondition target_precondition = 5;
+  repeated LeaseFence lease_fences = 6;
+}
+
+message FileMutationCommand {
+  oneof command {
+    CreateFile create_file = 1;
+    CreateDirectory create_directory = 2;
+    RenamePath rename = 3;
+    DeletePath delete = 4;
+  }
+}
+
+message FileMutationResult {
+  uint64 workspace_sequence = 1;
+  repeated FileEntry affected = 2;
+}
+
+enum SearchMode {
+  SEARCH_MODE_UNSPECIFIED = 0;
+  SEARCH_MODE_FILE_NAMES = 1;
+  SEARCH_MODE_TEXT = 2;
+}
+
+message SearchRequest {
+  SearchMode mode = 1;
+  string query = 2;
+  repeated WorkspacePath roots = 3;
+  repeated string include_globs = 4;
+  repeated string exclude_globs = 5;
+  bool case_sensitive = 6;
+  bool regular_expression = 7;
+  bool whole_word = 8;
+  uint32 max_results = 9;
+}
+
+message SearchMatch {
+  WorkspacePath path = 1;
+  Range range = 2;
+  string preview = 3;
+  uint32 preview_match_start_utf16 = 4;
+  uint32 preview_match_end_utf16 = 5;
+}
+
+message SearchResultChunk {
+  repeated SearchMatch matches = 1;
+  reserved 2;
+  bool truncated = 3;
+  uint64 workspace_sequence = 4;
+  reserved 5;
+}
+
+message UserWorkspaceStateChanged {
+  string key = 1;
+  uint64 revision = 2;
+  Value value = 3;
+}
+
+message UserWorkspaceStateEntry {
+  string key = 1;
+  uint64 revision = 2;
+  Value value = 3;
+}
+
+message SetUserWorkspaceState {
+  CommandMeta meta = 1;
+  string key = 2;
+  uint64 expected_revision = 3;
+  Value value = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Documents, edits and leases
+// ---------------------------------------------------------------------------
+
+enum EndOfLine {
+  END_OF_LINE_UNSPECIFIED = 0;
+  END_OF_LINE_LF = 1;
+  END_OF_LINE_CRLF = 2;
+}
+
+enum SnapshotCompression {
+  SNAPSHOT_COMPRESSION_UNSPECIFIED = 0;
+  SNAPSHOT_COMPRESSION_NONE = 1;
+  SNAPSHOT_COMPRESSION_ZSTD = 2;
+}
+
+message OpenDocumentRequest {
+  // Opening a server-side document reference is an idempotent mutation.
+  // A write lease is acquired separately with LeaseCommand.
+  CommandMeta meta = 1;
+  WorkspacePath path = 2;
+}
+
+message CloseDocumentRequest {
+  CommandMeta meta = 1;
+  Uuid document_id = 2;
+}
+
+message DocumentDescriptor {
+  Uuid document_id = 1;
+  WorkspacePath path = 2;
+  string language_id = 3;
+  string encoding = 4;
+  EndOfLine end_of_line = 5;
+  bool read_only = 6;
+  uint64 canonical_version = 7;
+  uint64 saved_version = 8;
+  // Stream generation belongs exclusively to Snapshot/Event metadata.
+  reserved 9;
+}
+
+message DocumentSnapshotPayload {
+  DocumentDescriptor document = 1;
+  bytes utf8_content = 2;
+  LeaseState write_lease = 3;
+  // Complete derived state at the same high-water cut. Absence means the
+  // client clears that projection, never retaining pre-snapshot values.
+  DiagnosticSet diagnostics = 4;
+  SemanticTokenFull semantic_tokens = 5;
+}
+
+message TextEdit {
+  Range range = 1;
+  string new_text = 2;
+}
+
+message EditBatch {
+  CommandMeta meta = 1;
+  Uuid document_id = 2;
+  uint64 base_version = 3;
+  uint64 lease_epoch = 4;
+  uint64 client_sequence = 5;
+  repeated TextEdit edits = 6;
+}
+
+message EditAck {
+  Uuid idempotency_key = 1;
+  Uuid document_id = 2;
+  uint64 client_sequence = 3;
+  uint64 base_version = 4;
+  uint64 accepted_version = 5;
+  uint64 saved_version = 6;
+  Digest canonical_digest = 7;
+}
+
+message SaveDocument {
+  CommandMeta meta = 1;
+  Uuid document_id = 2;
+  uint64 expected_version = 3;
+  uint64 expected_lease_epoch = 4;
+}
+
+message RevertDocument {
+  CommandMeta meta = 1;
+  Uuid document_id = 2;
+  uint64 expected_version = 3;
+  uint64 expected_lease_epoch = 4;
+}
+
+message SetDocumentLanguage {
+  CommandMeta meta = 1;
+  Uuid document_id = 2;
+  uint64 expected_version = 3;
+  string language_id = 4;
+  uint64 expected_lease_epoch = 5;
+}
+
+message DocumentCommand {
+  oneof command {
+    SaveDocument save = 1;
+    RevertDocument revert = 2;
+    SetDocumentLanguage set_language = 3;
+  }
+}
+
+enum DocumentChangeOrigin {
+  DOCUMENT_CHANGE_ORIGIN_UNSPECIFIED = 0;
+  DOCUMENT_CHANGE_ORIGIN_CLIENT = 1;
+  DOCUMENT_CHANGE_ORIGIN_EXTENSION = 2;
+  DOCUMENT_CHANGE_ORIGIN_AGENT = 3;
+  DOCUMENT_CHANGE_ORIGIN_FORMATTER = 4;
+  DOCUMENT_CHANGE_ORIGIN_EXTERNAL_PROCESS = 5;
+  DOCUMENT_CHANGE_ORIGIN_GIT = 6;
+}
+
+message DocumentChanged {
+  Uuid document_id = 1;
+  uint64 base_version = 2;
+  uint64 canonical_version = 3;
+  repeated TextEdit edits = 4;
+  DocumentChangeOrigin origin = 5;
+  Uuid origin_client_instance_id = 6;
+}
+
+message DocumentSaved {
+  Uuid document_id = 1;
+  uint64 canonical_version = 2;
+  uint64 saved_version = 3;
+  Digest file_digest = 4;
+}
+
+message ExternalDocumentChange {
+  Uuid document_id = 1;
+  uint64 previous_version = 2;
+  uint64 canonical_version = 3;
+  Digest file_digest = 4;
+  bool conflicted_with_dirty_document = 5;
+  // Bounded delta whose coordinates refer to previous_version. Otherwise
+  // snapshot_required is true and edits must be empty.
+  repeated TextEdit edits = 6;
+  bool snapshot_required = 7;
+}
+
+message DocumentConflict {
+  Uuid document_id = 1;
+  uint64 canonical_version = 2;
+  uint64 submitted_base_version = 3;
+  bool snapshot_required = 4;
+  string safe_reason = 5;
+}
+
+message DocumentLanguageChanged {
+  Uuid document_id = 1;
+  uint64 canonical_version = 2;
+  string language_id = 3;
+}
+
+message DocumentEvent {
+  oneof event {
+    DocumentChanged changed = 1;
+    DocumentSaved saved = 2;
+    ExternalDocumentChange external_change = 3;
+    DocumentConflict conflict = 4;
+    DocumentLanguageChanged language_changed = 5;
+  }
+}
+
+enum LeaseKind {
+  LEASE_KIND_UNSPECIFIED = 0;
+  LEASE_KIND_WORKBENCH_CONTROL = 1;
+  LEASE_KIND_DOCUMENT_WRITE = 2;
+  LEASE_KIND_TERMINAL_INPUT = 3;
+  LEASE_KIND_DEBUG_CONTROL = 4;
+}
+
+message WorkbenchLeaseTarget {
+  Uuid workspace_id = 1;
+}
+
+message DocumentLeaseTarget {
+  Uuid document_id = 1;
+}
+
+message TerminalLeaseTarget {
+  Uuid terminal_id = 1;
+}
+
+message DebugLeaseTarget {
+  Uuid debug_session_id = 1;
+}
+
+message LeaseTarget {
+  // Typed wrappers make kind/identifier mismatches unrepresentable.
+  oneof target {
+    WorkbenchLeaseTarget workbench = 1;
+    DocumentLeaseTarget document = 2;
+    TerminalLeaseTarget terminal = 3;
+    DebugLeaseTarget debug = 4;
+  }
+}
+
+message AcquireLease {
+  CommandMeta meta = 1;
+  LeaseTarget target = 2;
+  bool allow_explicit_takeover = 3;
+}
+
+message RenewLease {
+  CommandMeta meta = 1;
+  LeaseTarget target = 2;
+  uint64 expected_epoch = 3;
+}
+
+message ReleaseLease {
+  CommandMeta meta = 1;
+  LeaseTarget target = 2;
+  uint64 expected_epoch = 3;
+}
+
+message LeaseCommand {
+  oneof command {
+    AcquireLease acquire = 1;
+    RenewLease renew = 2;
+    ReleaseLease release = 3;
+  }
+}
+
+enum LeaseStatus {
+  LEASE_STATUS_UNSPECIFIED = 0;
+  LEASE_STATUS_UNOWNED = 1;
+  LEASE_STATUS_HELD = 2;
+  LEASE_STATUS_EXPIRED = 3;
+  LEASE_STATUS_REVOKED = 4;
+}
+
+message LeaseState {
+  LeaseTarget target = 1;
+  LeaseStatus status = 2;
+  Uuid owner_client_instance_id = 3;
+  uint64 workspace_generation = 4;
+  uint64 lease_epoch = 5;
+  int64 expires_unix_ms = 6;
+}
+
+message LeaseFence {
+  LeaseTarget target = 1;
+  uint64 workspace_generation = 2;
+  uint64 lease_epoch = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Workbench context, commands, contributions and server-driven UI
+// ---------------------------------------------------------------------------
+
+message Selection {
+  Position anchor = 1;
+  Position active = 2;
+}
+
+message EditorContext {
+  Uuid document_id = 1;
+  repeated Selection selections = 2;
+  repeated Range visible_ranges = 3;
+  bool active = 4;
+  uint64 observed_document_version = 5;
+  string tab_group_id = 6;
+  uint32 tab_order = 7;
+}
+
+enum WorkbenchFocus {
+  WORKBENCH_FOCUS_UNSPECIFIED = 0;
+  WORKBENCH_FOCUS_EDITOR = 1;
+  WORKBENCH_FOCUS_TERMINAL = 2;
+  WORKBENCH_FOCUS_SCM = 3;
+  WORKBENCH_FOCUS_DEBUG = 4;
+  WORKBENCH_FOCUS_TESTING = 5;
+  WORKBENCH_FOCUS_AGENT = 6;
+}
+
+message WorkbenchContextUpdate {
+  CommandMeta meta = 1;
+  uint64 workbench_control_lease_epoch = 2;
+  uint64 client_context_sequence = 3;
+  repeated EditorContext editors = 4;
+  Uuid active_terminal_id = 5;
+  WorkbenchFocus focus = 6;
+}
+
+message CommandDescriptor {
+  string command_id = 1;
+  string title = 2;
+  string category = 3;
+  bool enabled = 4;
+  bool visible = 5;
+  // Produced by the trusted policy registry, never accepted from an extension
+  // as authorization input.
+  CommandPolicyDescriptor policy = 6;
+}
+
+enum CommandEffectKind {
+  COMMAND_EFFECT_KIND_UNSPECIFIED = 0;
+  COMMAND_EFFECT_KIND_READ_ONLY = 1;
+  COMMAND_EFFECT_KIND_WORKSPACE_MUTATION = 2;
+  COMMAND_EFFECT_KIND_PROCESS_EXECUTION = 3;
+  COMMAND_EFFECT_KIND_NETWORK = 4;
+  COMMAND_EFFECT_KIND_PRIVILEGED_UI = 5;
+}
+
+message CommandPolicyDescriptor {
+  Digest policy_digest = 1;
+  repeated Capability required_capabilities = 2;
+  repeated Permission required_permissions = 3;
+  repeated CommandEffectKind effects = 4;
+  bool requires_workspace_trust = 5;
+  bool requires_workbench_control = 6;
+}
+
+message TreeViewDescriptor {
+  string view_id = 1;
+  string title = 2;
+  bool can_refresh = 3;
+}
+
+message StatusItemDescriptor {
+  string item_id = 1;
+  string text = 2;
+  string tooltip = 3;
+  string command_id = 4;
+  int32 priority = 5;
+  bool visible = 6;
+}
+
+message OutputChannelDescriptor {
+  Uuid output_channel_id = 1;
+  string contribution_id = 2;
+  string label = 3;
+  string language_id = 4;
+}
+
+message ContributionSnapshot {
+  uint64 extension_generation = 1;
+  uint64 contribution_sequence = 2;
+  repeated CommandDescriptor commands = 3;
+  repeated TreeViewDescriptor tree_views = 4;
+  repeated StatusItemDescriptor status_items = 5;
+  repeated OutputChannelDescriptor output_channels = 6;
+  // Extension snapshot streams are workspace-scoped in v1. Validators compare
+  // this payload identity with ExtensionStreamKey.workspace_id.
+  Uuid workspace_id = 7;
+}
+
+message ContributionRemoval {
+  oneof contribution {
+    string command_id = 1;
+    string tree_view_id = 2;
+    string status_item_id = 3;
+    Uuid output_channel_id = 4;
+  }
+}
+
+enum ContributionDeltaKind {
+  CONTRIBUTION_DELTA_KIND_UNSPECIFIED = 0;
+  CONTRIBUTION_DELTA_KIND_UPSERT = 1;
+  CONTRIBUTION_DELTA_KIND_REMOVE = 2;
+  CONTRIBUTION_DELTA_KIND_RESET_REQUIRED = 3;
+}
+
+message ContributionDelta {
+  uint64 extension_generation = 1;
+  uint64 contribution_sequence = 2;
+  ContributionDeltaKind kind = 3;
+  repeated CommandDescriptor commands = 4;
+  repeated TreeViewDescriptor tree_views = 5;
+  repeated StatusItemDescriptor status_items = 6;
+  repeated OutputChannelDescriptor output_channels = 7;
+  repeated ContributionRemoval removals = 8;
+  // Extension streams are workspace-scoped in v1. This is the payload-side
+  // identity paired with StreamEventMeta.key.extension.workspace_id.
+  Uuid workspace_id = 9;
+}
+
+message ExecuteCommandRequest {
+  CommandMeta meta = 1;
+  uint64 extension_generation = 2;
+  string command_id = 3;
+  repeated Value arguments = 4;
+  // Must match the trusted registry entry advertised with CommandDescriptor.
+  // Unknown/unclassified commands are never executable through this API.
+  Digest expected_policy_digest = 5;
+  // Required and non-zero when the trusted policy requires Workbench control.
+  uint64 expected_workbench_control_lease_epoch = 6;
+}
+
+message ExecuteCommandResponse {
+  uint64 extension_generation = 1;
+  Value result = 2;
+}
+
+message TreeItem {
+  string opaque_handle = 1;
+  string label = 2;
+  string description = 3;
+  string tooltip = 4;
+  bool collapsible = 5;
+  bool expanded = 6;
+  string icon_key = 7;
+  string command_id = 8;
+  Value command_argument = 9;
+  string context_value = 10;
+}
+
+message TreeViewRequest {
+  uint64 extension_generation = 1;
+  string view_id = 2;
+  string parent_opaque_handle = 3;
+  uint32 page_size = 4;
+  bytes page_token = 5;
+}
+
+message TreeViewResponse {
+  uint64 extension_generation = 1;
+  string view_id = 2;
+  string parent_opaque_handle = 3;
+  repeated TreeItem children = 4;
+  PageInfo page = 5;
+}
+
+message TreeViewInvalidated {
+  uint64 extension_generation = 1;
+  string view_id = 2;
+  string opaque_handle = 3;
+  // Extension streams are workspace-scoped in v1. Do not infer this identity
+  // from the stream key itself.
+  Uuid workspace_id = 4;
+}
+
+enum UiRoutingPolicy {
+  UI_ROUTING_POLICY_UNSPECIFIED = 0;
+  UI_ROUTING_POLICY_ORIGIN_CLIENT = 1;
+  UI_ROUTING_POLICY_WORKBENCH_CONTROLLER = 2;
+  UI_ROUTING_POLICY_ALL_AUTHORIZED = 3;
+  UI_ROUTING_POLICY_FIRST_APPROVER = 4;
+}
+
+message QuickPickItem {
+  string item_id = 1;
+  string label = 2;
+  string description = 3;
+  string detail = 4;
+  bool picked = 5;
+}
+
+message QuickPickRequest {
+  string title = 1;
+  string placeholder = 2;
+  bool can_pick_many = 3;
+  bool ignore_focus_out = 4;
+  // First bounded page only. items_handle is used for subsequent pages.
+  repeated QuickPickItem items = 5;
+  string items_handle = 6;
+  PageInfo page = 7;
+}
+
+message QuickPickPageRequest {
+  Uuid ui_request_id = 1;
+  uint64 extension_generation = 2;
+  string items_handle = 3;
+  uint32 page_size = 4;
+  bytes page_token = 5;
+}
+
+message QuickPickPageResponse {
+  Uuid ui_request_id = 1;
+  uint64 extension_generation = 2;
+  repeated QuickPickItem items = 3;
+  PageInfo page = 4;
+}
+
+message InputBoxRequest {
+  string title = 1;
+  string prompt = 2;
+  string placeholder = 3;
+  string initial_value = 4;
+  bool password = 5;
+  bool ignore_focus_out = 6;
+}
+
+enum MessageSeverity {
+  MESSAGE_SEVERITY_UNSPECIFIED = 0;
+  MESSAGE_SEVERITY_INFO = 1;
+  MESSAGE_SEVERITY_WARNING = 2;
+  MESSAGE_SEVERITY_ERROR = 3;
+}
+
+message MessageAction {
+  string action_id = 1;
+  string title = 2;
+  bool close_affordance = 3;
+}
+
+message ShowMessageRequest {
+  MessageSeverity severity = 1;
+  string message = 2;
+  bool modal = 3;
+  repeated MessageAction actions = 4;
+}
+
+message OpenUriRequest {
+  string uri = 1;
+  bool requires_external_application = 2;
+}
+
+message DialogRequest {
+  string title = 1;
+  string message = 2;
+  repeated MessageAction buttons = 3;
+  bool destructive = 4;
+}
+
+enum ClipboardAction {
+  CLIPBOARD_ACTION_UNSPECIFIED = 0;
+  CLIPBOARD_ACTION_READ_TEXT = 1;
+  CLIPBOARD_ACTION_WRITE_TEXT = 2;
+}
+
+message ClipboardRequest {
+  // Validator requires UiRequest.routing=WORKBENCH_CONTROLLER, foreground
+  // device session and PERMISSION_DEVICE_CLIPBOARD for both actions.
+  ClipboardAction action = 1;
+  string bounded_text = 2;
+}
+
+message ProgressRequest {
+  Uuid progress_id = 1;
+  string title = 2;
+  string initial_message = 3;
+  bool cancellable = 4;
+}
+
+message UiRequest {
+  Uuid ui_request_id = 1;
+  Uuid origin_client_instance_id = 2;
+  uint64 extension_generation = 3;
+  int64 deadline_unix_ms = 4;
+  UiRoutingPolicy routing = 5;
+  oneof request {
+    QuickPickRequest quick_pick = 6;
+    InputBoxRequest input_box = 7;
+    ShowMessageRequest show_message = 8;
+    OpenUriRequest open_uri = 9;
+    DialogRequest dialog = 10;
+    ClipboardRequest clipboard = 11;
+    ProgressRequest progress = 12;
+  }
+}
+
+message QuickPickResponse {
+  repeated string selected_item_ids = 1;
+}
+
+message InputBoxResponse {
+  string value = 1;
+}
+
+message MessageResponse {
+  string selected_action_id = 1;
+}
+
+message OpenUriResponse {
+  bool accepted = 1;
+}
+
+message DialogResponse {
+  string selected_action_id = 1;
+}
+
+message ClipboardResponse {
+  string bounded_text = 1;
+  bool accepted = 2;
+}
+
+message ProgressResponse {
+  bool cancel_requested = 1;
+}
+
+message UiCancelled {
+  string safe_reason = 1;
+}
+
+message UiResponse {
+  Uuid ui_request_id = 1;
+  uint64 extension_generation = 2;
+  oneof outcome {
+    UiCancelled cancelled = 3;
+    QuickPickResponse quick_pick = 4;
+    InputBoxResponse input_box = 5;
+    MessageResponse show_message = 6;
+    OpenUriResponse open_uri = 7;
+    DialogResponse dialog = 8;
+    ClipboardResponse clipboard = 9;
+    ProgressResponse progress = 10;
+  }
+}
+
+message CancelUiRequest {
+  Uuid ui_request_id = 1;
+  uint64 extension_generation = 2;
+  string safe_reason = 3;
+}
+
+message Notification {
+  MessageSeverity severity = 1;
+  string title = 2;
+  string message = 3;
+  string source = 4;
+}
+
+message ProgressUpdate {
+  Uuid progress_id = 1;
+  string message = 2;
+  uint64 completed_units = 3;
+  uint64 total_units = 4;
+  bool terminal = 5;
+  PublicError terminal_error = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Language features
+// ---------------------------------------------------------------------------
+
+enum CompletionTriggerKind {
+  COMPLETION_TRIGGER_KIND_UNSPECIFIED = 0;
+  COMPLETION_TRIGGER_KIND_INVOKED = 1;
+  COMPLETION_TRIGGER_KIND_CHARACTER = 2;
+  COMPLETION_TRIGGER_KIND_INCOMPLETE = 3;
+}
+
+message CompletionRequest {
+  Position position = 1;
+  CompletionTriggerKind trigger_kind = 2;
+  string trigger_character = 3;
+  uint32 page_size = 4;
+}
+
+message HoverRequest {
+  Position position = 1;
+}
+
+enum LocationRequestKind {
+  LOCATION_REQUEST_KIND_UNSPECIFIED = 0;
+  LOCATION_REQUEST_KIND_DEFINITION = 1;
+  LOCATION_REQUEST_KIND_DECLARATION = 2;
+  LOCATION_REQUEST_KIND_TYPE_DEFINITION = 3;
+  LOCATION_REQUEST_KIND_IMPLEMENTATION = 4;
+  LOCATION_REQUEST_KIND_REFERENCES = 5;
+}
+
+message LocationRequest {
+  Position position = 1;
+  LocationRequestKind kind = 2;
+  bool include_declaration = 3;
+}
+
+message RenameRequest {
+  Position position = 1;
+  string new_name = 2;
+  bool prepare_only = 3;
+}
+
+message CodeActionRequest {
+  Range range = 1;
+  repeated string diagnostic_ids = 2;
+  repeated string only_kinds = 3;
+  uint32 page_size = 4;
+}
+
+message ContinueLanguageResultRequest {
+  bytes continuation_token = 1;
+  uint32 page_size = 2;
+}
+
+message ResolveCompletionRequest {
+  string opaque_handle = 1;
+  uint64 extension_generation = 2;
+}
+
+message ResolveCodeActionRequest {
+  string opaque_handle = 1;
+  uint64 extension_generation = 2;
+}
+
+message FormattingRequest {
+  Range range = 1;
+  bool range_only = 2;
+  uint32 tab_size = 3;
+  bool insert_spaces = 4;
+}
+
+message SignatureHelpRequest {
+  Position position = 1;
+  string trigger_character = 2;
+  bool retrigger = 3;
+}
+
+message LanguageRequest {
+  Uuid document_id = 1;
+  uint64 document_version = 2;
+  oneof request {
+    CompletionRequest completion = 3;
+    HoverRequest hover = 4;
+    LocationRequest locations = 5;
+    RenameRequest rename = 6;
+    CodeActionRequest code_actions = 7;
+    FormattingRequest formatting = 8;
+    SignatureHelpRequest signature_help = 9;
+    ContinueLanguageResultRequest continue_result = 10;
+    ResolveCompletionRequest resolve_completion = 11;
+    ResolveCodeActionRequest resolve_code_action = 12;
+  }
+}
+
+enum CompletionItemKind {
+  COMPLETION_ITEM_KIND_UNSPECIFIED = 0;
+  COMPLETION_ITEM_KIND_TEXT = 1;
+  COMPLETION_ITEM_KIND_METHOD = 2;
+  COMPLETION_ITEM_KIND_FUNCTION = 3;
+  COMPLETION_ITEM_KIND_CONSTRUCTOR = 4;
+  COMPLETION_ITEM_KIND_FIELD = 5;
+  COMPLETION_ITEM_KIND_VARIABLE = 6;
+  COMPLETION_ITEM_KIND_CLASS = 7;
+  COMPLETION_ITEM_KIND_INTERFACE = 8;
+  COMPLETION_ITEM_KIND_MODULE = 9;
+  COMPLETION_ITEM_KIND_PROPERTY = 10;
+  COMPLETION_ITEM_KIND_KEYWORD = 11;
+  COMPLETION_ITEM_KIND_SNIPPET = 12;
+}
+
+message CompletionItem {
+  string item_id = 1;
+  string label = 2;
+  string detail = 3;
+  string documentation_markdown = 4;
+  CompletionItemKind kind = 5;
+  string sort_text = 6;
+  string filter_text = 7;
+  string insert_text = 8;
+  bool insert_as_snippet = 9;
+  // Immutable, version-bound server candidate; applying it is a separate
+  // effectful WorkspaceEditCommand.
+  WorkspaceEditReference apply_edit = 10;
+  reserved 11;
+  string command_id = 12;
+  string opaque_handle = 13;
+  uint64 extension_generation = 14;
+  bool requires_resolution = 15;
+}
+
+message CompletionList {
+  repeated CompletionItem items = 1;
+  bool incomplete = 2;
+  PageInfo page = 3;
+}
+
+message HoverResult {
+  repeated string markdown_blocks = 1;
+  Range range = 2;
+}
+
+message LocationList {
+  repeated Location locations = 1;
+  PageInfo page = 2;
+}
+
+message ResourceTarget {
+  oneof target {
+    // Preferred for an open document.
+    Uuid document_id = 1;
+    // Used for a closed workspace file.
+    WorkspacePath workspace_path = 2;
+    // Only product-registered non-file schemes are accepted; arbitrary host
+    // file:// URIs are rejected.
+    string canonical_uri = 3;
+  }
+}
+
+message TextDocumentEditSet {
+  ResourceTarget target = 1;
+  oneof precondition {
+    uint64 exact_document_version = 2;
+    Digest exact_file_digest = 3;
+  }
+  // All ranges refer to the same precondition state and are non-overlapping.
+  repeated TextEdit edits = 4;
+}
+
+message CreateResourceEdit {
+  WorkspacePath path = 1;
+  bool overwrite = 2;
+  bool ignore_if_exists = 3;
+  bytes bounded_initial_content = 4;
+  // Required even when overwrite/ignore_if_exists is set. Those flags retain
+  // VS Code intent but never weaken the candidate-time exact target state.
+  FilePrecondition target_precondition = 5;
+}
+
+message RenameResourceEdit {
+  WorkspacePath from = 1;
+  WorkspacePath to = 2;
+  bool overwrite = 3;
+  bool ignore_if_exists = 4;
+  FilePrecondition source_precondition = 5;
+  FilePrecondition target_precondition = 6;
+}
+
+message DeleteResourceEdit {
+  WorkspacePath path = 1;
+  bool recursive = 2;
+  bool ignore_if_missing = 3;
+  FilePrecondition target_precondition = 4;
+}
+
+message WorkspaceEditOperation {
+  oneof operation {
+    TextDocumentEditSet text_document = 1;
+    CreateResourceEdit create_resource = 2;
+    RenameResourceEdit rename_resource = 3;
+    DeleteResourceEdit delete_resource = 4;
+  }
+}
+
+message WorkspaceEdit {
+  // Operations execute in listed order under one Mutation Broker barrier and
+  // commit atomically or not at all. Resource preconditions are mandatory and
+  // are included in the immutable candidate digest; option flags never turn a
+  // changed target into a successful no-op.
+  repeated WorkspaceEditOperation operations = 1;
+}
+
+enum WorkspaceEditSourceKind {
+  WORKSPACE_EDIT_SOURCE_KIND_UNSPECIFIED = 0;
+  WORKSPACE_EDIT_SOURCE_KIND_COMPLETION = 1;
+  WORKSPACE_EDIT_SOURCE_KIND_RENAME = 2;
+  WORKSPACE_EDIT_SOURCE_KIND_FORMATTING = 3;
+  WORKSPACE_EDIT_SOURCE_KIND_CODE_ACTION = 4;
+  WORKSPACE_EDIT_SOURCE_KIND_EXTENSION_COMMAND = 5;
+}
+
+message WorkspaceEditReference {
+  Uuid candidate_id = 1;
+  Digest edit_digest = 2;
+  WorkspaceEditSourceKind source = 3;
+  uint64 extension_generation = 4;
+  Uuid originating_document_id = 5;
+  uint64 originating_document_version = 6;
+  repeated WorkspacePath affected_paths = 7;
+  int64 expires_unix_ms = 8;
+}
+
+message GetWorkspaceEditCandidate {
+  Uuid candidate_id = 1;
+  Digest expected_edit_digest = 2;
+}
+
+message ApplyWorkspaceEdit {
+  CommandMeta meta = 1;
+  Uuid candidate_id = 2;
+  Digest expected_edit_digest = 3;
+  repeated LeaseFence lease_fences = 4;
+}
+
+message WorkspaceEditCommand {
+  oneof command {
+    GetWorkspaceEditCandidate get = 1;
+    ApplyWorkspaceEdit apply = 2;
+  }
+}
+
+message AppliedResourceRevision {
+  ResourceTarget target = 1;
+  uint64 canonical_document_version = 2;
+  Digest content_digest = 3;
+}
+
+message WorkspaceEditApplied {
+  Uuid candidate_id = 1;
+  Digest edit_digest = 2;
+  repeated AppliedResourceRevision revisions = 3;
+}
+
+message WorkspaceEditCandidatePayload {
+  WorkspaceEditReference descriptor = 1;
+  WorkspaceEdit edit = 2;
+}
+
+message RenamePrepareResult {
+  Range range = 1;
+  string placeholder = 2;
+}
+
+message CodeAction {
+  string action_id = 1;
+  string title = 2;
+  string kind = 3;
+  bool preferred = 4;
+  WorkspaceEditReference edit = 5;
+  string command_id = 6;
+  repeated Value command_arguments = 7;
+  bool requires_resolution = 8;
+  string opaque_handle = 9;
+  uint64 extension_generation = 10;
+}
+
+message CodeActionList {
+  repeated CodeAction actions = 1;
+  PageInfo page = 2;
+}
+
+message SignatureParameter {
+  string label = 1;
+  string documentation_markdown = 2;
+}
+
+message SignatureInformation {
+  string label = 1;
+  string documentation_markdown = 2;
+  repeated SignatureParameter parameters = 3;
+  uint32 active_parameter = 4;
+}
+
+message SignatureHelpResult {
+  repeated SignatureInformation signatures = 1;
+  uint32 active_signature = 2;
+  uint32 active_parameter = 3;
+}
+
+message LanguageResponse {
+  Uuid document_id = 1;
+  uint64 requested_document_version = 2;
+  uint64 result_document_version = 3;
+  uint64 extension_generation = 4;
+  bool stale = 5;
+  oneof result {
+    CompletionList completion = 6;
+    HoverResult hover = 7;
+    LocationList locations = 8;
+    WorkspaceEditReference workspace_edit = 9;
+    RenamePrepareResult rename_prepare = 10;
+    CodeActionList code_actions = 11;
+    SignatureHelpResult signature_help = 12;
+  }
+}
+
+enum DiagnosticSeverity {
+  DIAGNOSTIC_SEVERITY_UNSPECIFIED = 0;
+  DIAGNOSTIC_SEVERITY_ERROR = 1;
+  DIAGNOSTIC_SEVERITY_WARNING = 2;
+  DIAGNOSTIC_SEVERITY_INFORMATION = 3;
+  DIAGNOSTIC_SEVERITY_HINT = 4;
+}
+
+message Diagnostic {
+  string diagnostic_id = 1;
+  Range range = 2;
+  DiagnosticSeverity severity = 3;
+  string code = 4;
+  string source = 5;
+  string message = 6;
+  repeated Location related = 7;
+}
+
+message DiagnosticSet {
+  Uuid document_id = 1;
+  uint64 causal_document_version = 2;
+  uint64 extension_generation = 3;
+  // Must fit one event frame. Larger complete sets set snapshot_required and
+  // are carried only inside the following chunked document snapshot.
+  repeated Diagnostic diagnostics = 4;
+  Uuid diagnostic_set_id = 5;
+  reserved 6, 7;
+  Digest complete_set_digest = 8;
+  bool snapshot_required = 9;
+}
+
+message SemanticTokenEdit {
+  uint32 start = 1;
+  uint32 delete_count = 2;
+  repeated uint32 data = 3;
+}
+
+message SemanticTokenLegend {
+  repeated string token_types = 1;
+  repeated string token_modifiers = 2;
+}
+
+message SemanticTokenFull {
+  Uuid document_id = 1;
+  uint64 causal_document_version = 2;
+  uint64 extension_generation = 3;
+  string result_id = 4;
+  SemanticTokenLegend legend = 5;
+  repeated uint32 data = 6;
+  Uuid token_set_id = 7;
+  reserved 8, 9;
+  Digest complete_set_digest = 10;
+  bool snapshot_required = 11;
+}
+
+message SemanticTokenDelta {
+  Uuid document_id = 1;
+  uint64 causal_document_version = 2;
+  uint64 extension_generation = 3;
+  string previous_result_id = 4;
+  string result_id = 5;
+  repeated SemanticTokenEdit edits = 6;
+}
+
+message SemanticTokenReset {
+  Uuid document_id = 1;
+  uint64 extension_generation = 2;
+  string safe_reason = 3;
+}
+
+message SemanticTokensEvent {
+  oneof update {
+    SemanticTokenFull full = 1;
+    SemanticTokenDelta delta = 2;
+    SemanticTokenReset reset = 3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Terminal
+// ---------------------------------------------------------------------------
+
+message CreateTerminal {
+  CommandMeta meta = 1;
+  string profile_id = 2;
+  string display_name = 3;
+  WorkspacePath working_directory = 4;
+  uint32 columns = 5;
+  uint32 rows = 6;
+  uint64 workbench_control_lease_epoch = 7;
+}
+
+message AttachTerminal {
+  CommandMeta meta = 1;
+  Uuid terminal_id = 2;
+  uint64 after_raw_byte_offset = 3;
+}
+
+message TerminalInput {
+  CommandMeta meta = 1;
+  Uuid terminal_id = 2;
+  uint64 lease_epoch = 3;
+  bytes data = 4;
+}
+
+message ResizeTerminal {
+  CommandMeta meta = 1;
+  Uuid terminal_id = 2;
+  uint64 lease_epoch = 3;
+  uint32 columns = 4;
+  uint32 rows = 5;
+}
+
+message CloseTerminal {
+  CommandMeta meta = 1;
+  Uuid terminal_id = 2;
+  uint64 terminal_input_lease_epoch = 3;
+}
+
+message TerminalCommand {
+  oneof command {
+    CreateTerminal create = 1;
+    AttachTerminal attach = 2;
+    TerminalInput input = 3;
+    ResizeTerminal resize = 4;
+    CloseTerminal close = 5;
+  }
+}
+
+enum TerminalState {
+  TERMINAL_STATE_UNSPECIFIED = 0;
+  TERMINAL_STATE_STARTING = 1;
+  TERMINAL_STATE_RUNNING = 2;
+  TERMINAL_STATE_EXITED = 3;
+  TERMINAL_STATE_FAILED = 4;
+}
+
+message TerminalDescriptor {
+  Uuid terminal_id = 1;
+  string display_name = 2;
+  TerminalState state = 3;
+  uint32 columns = 4;
+  uint32 rows = 5;
+  oneof terminal_outcome {
+    int32 exit_code = 6;
+    PublicError failure = 7;
+  }
+}
+
+enum TerminalRecoveryMode {
+  TERMINAL_RECOVERY_MODE_UNSPECIFIED = 0;
+  TERMINAL_RECOVERY_MODE_NORMALIZED_CHECKPOINT = 1;
+  TERMINAL_RECOVERY_MODE_CLEAR_AND_RESET_DEGRADED = 2;
+}
+
+message TerminalStyle {
+  uint32 foreground_rgba = 1;
+  uint32 background_rgba = 2;
+  bool bold = 3;
+  bool italic = 4;
+  bool underline = 5;
+  bool inverse = 6;
+  bool dim = 7;
+  bool strikethrough = 8;
+}
+
+message TerminalCell {
+  string grapheme = 1;
+  uint32 display_width = 2;
+  uint32 style_index = 3;
+}
+
+message TerminalRow {
+  repeated TerminalCell cells = 1;
+  bool wrapped = 2;
+}
+
+message TerminalRenderCheckpoint {
+  uint32 schema_version = 1;
+  TerminalRecoveryMode recovery_mode = 2;
+  uint32 columns = 3;
+  uint32 rows = 4;
+  uint32 cursor_column = 5;
+  uint32 cursor_row = 6;
+  bool cursor_visible = 7;
+  bool alternate_screen = 8;
+  bool origin_mode = 9;
+  bool auto_wrap_mode = 10;
+  repeated TerminalStyle styles = 11;
+  repeated TerminalRow normalized_scrollback = 12;
+  repeated TerminalRow normalized_screen = 13;
+  // Raw bytes begin from the state represented by this checkpoint.
+  uint64 raw_byte_offset = 14;
+}
+
+message TerminalSnapshot {
+  TerminalDescriptor terminal = 1;
+  // render_checkpoint represents state at base_raw_byte_offset; the raw bytes
+  // replay from base through next. Its raw_byte_offset must equal base.
+  uint64 base_raw_byte_offset = 2;
+  uint64 next_raw_byte_offset = 3;
+  bytes raw_scrollback = 4;
+  bool gap_before_base = 5;
+  bool truncated = 6;
+  LeaseState input_lease = 7;
+  TerminalRenderCheckpoint render_checkpoint = 8;
+}
+
+message TerminalChunk {
+  Uuid terminal_id = 1;
+  uint64 raw_byte_offset = 2;
+  bytes data = 3;
+  uint64 next_raw_byte_offset = 4;
+}
+
+message TerminalResized {
+  Uuid terminal_id = 1;
+  uint32 columns = 2;
+  uint32 rows = 3;
+}
+
+message TerminalEvent {
+  // Lease changes use the single typed ServerEvent.lease route so the
+  // StreamKey-to-LeaseTarget identity validator cannot be bypassed.
+  reserved 4;
+  reserved "input_lease";
+  oneof event {
+    TerminalDescriptor state = 1;
+    TerminalChunk output = 2;
+    TerminalResized resized = 3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SCM
+// ---------------------------------------------------------------------------
+
+enum ScmResourceState {
+  SCM_RESOURCE_STATE_UNSPECIFIED = 0;
+  SCM_RESOURCE_STATE_MODIFIED = 1;
+  SCM_RESOURCE_STATE_ADDED = 2;
+  SCM_RESOURCE_STATE_DELETED = 3;
+  SCM_RESOURCE_STATE_RENAMED = 4;
+  SCM_RESOURCE_STATE_CONFLICTED = 5;
+  SCM_RESOURCE_STATE_UNTRACKED = 6;
+}
+
+message ScmResource {
+  string resource_id = 1;
+  WorkspacePath path = 2;
+  WorkspacePath original_path = 3;
+  ScmResourceState state = 4;
+  string group_id = 5;
+}
+
+message ScmGroup {
+  string group_id = 1;
+  string label = 2;
+  repeated ScmResource resources = 3;
+}
+
+message ScmSnapshot {
+  Uuid provider_id = 1;
+  string label = 2;
+  string root_uri = 3;
+  string branch = 4;
+  string head_revision = 5;
+  repeated ScmGroup groups = 6;
+  uint64 revision = 7;
+}
+
+enum ScmActionKind {
+  SCM_ACTION_KIND_UNSPECIFIED = 0;
+  SCM_ACTION_KIND_REFRESH = 1;
+  SCM_ACTION_KIND_STAGE = 2;
+  SCM_ACTION_KIND_UNSTAGE = 3;
+  SCM_ACTION_KIND_DISCARD = 4;
+  SCM_ACTION_KIND_COMMIT = 5;
+}
+
+message ScmCommand {
+  CommandMeta meta = 1;
+  Uuid provider_id = 2;
+  ScmActionKind action = 3;
+  repeated string resource_ids = 4;
+  string commit_message = 5;
+  uint64 expected_revision = 6;
+}
+
+message ScmPageRequest {
+  Uuid provider_id = 1;
+  uint64 expected_revision = 2;
+  string group_id = 3;
+  uint32 page_size = 4;
+  bytes page_token = 5;
+}
+
+message ScmPageResponse {
+  Uuid provider_id = 1;
+  uint64 revision = 2;
+  string group_id = 3;
+  repeated ScmResource resources = 4;
+  PageInfo page = 5;
+}
+
+message ScmDelta {
+  Uuid provider_id = 1;
+  uint64 previous_revision = 2;
+  uint64 revision = 3;
+  repeated ScmResource upserted_resources = 4;
+  repeated string removed_resource_ids = 5;
+  bool snapshot_required = 6;
+}
+
+message ScmEvent {
+  ScmDelta delta = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Debugging
+// ---------------------------------------------------------------------------
+
+enum DebugActionKind {
+  DEBUG_ACTION_KIND_UNSPECIFIED = 0;
+  reserved 1;
+  DEBUG_ACTION_KIND_CONTINUE = 2;
+  DEBUG_ACTION_KIND_PAUSE = 3;
+  DEBUG_ACTION_KIND_STEP_OVER = 4;
+  DEBUG_ACTION_KIND_STEP_IN = 5;
+  DEBUG_ACTION_KIND_STEP_OUT = 6;
+  DEBUG_ACTION_KIND_RESTART = 7;
+  DEBUG_ACTION_KIND_STOP = 8;
+  DEBUG_ACTION_KIND_SET_BREAKPOINTS = 9;
+  reserved 10;
+}
+
+message SourceBreakpoint {
+  WorkspacePath path = 1;
+  uint32 line = 2;
+  uint32 utf16_column = 3;
+  string condition = 4;
+  string hit_condition = 5;
+  string log_message = 6;
+}
+
+message StartDebugSession {
+  CommandMeta meta = 1;
+  uint64 workbench_control_lease_epoch = 2;
+  string configuration_name = 3;
+  ObjectValue launch_configuration = 4;
+}
+
+message ControlDebugSession {
+  CommandMeta meta = 1;
+  Uuid debug_session_id = 2;
+  uint64 debug_control_lease_epoch = 3;
+  DebugActionKind action = 4;
+  uint64 thread_id = 5;
+  repeated SourceBreakpoint breakpoints = 6;
+  uint64 expected_stop_epoch = 7;
+}
+
+message EvaluateDebugExpression {
+  CommandMeta meta = 1;
+  Uuid debug_session_id = 2;
+  uint64 debug_control_lease_epoch = 3;
+  uint64 expected_stop_epoch = 4;
+  uint64 expected_state_revision = 5;
+  uint64 frame_id = 6;
+  string expression = 7;
+}
+
+message DebugCommand {
+  oneof command {
+    StartDebugSession start = 1;
+    ControlDebugSession control = 2;
+    EvaluateDebugExpression evaluate = 3;
+  }
+}
+
+enum DebugQueryKind {
+  DEBUG_QUERY_KIND_UNSPECIFIED = 0;
+  DEBUG_QUERY_KIND_THREADS = 1;
+  DEBUG_QUERY_KIND_STACK = 2;
+  DEBUG_QUERY_KIND_SCOPES = 3;
+  DEBUG_QUERY_KIND_VARIABLES = 4;
+  reserved 5;
+}
+
+message DebugRequest {
+  Uuid debug_session_id = 1;
+  DebugQueryKind kind = 2;
+  uint64 thread_id = 3;
+  uint64 frame_id = 4;
+  uint64 variables_reference = 5;
+  uint64 expected_stop_epoch = 6;
+  uint64 expected_state_revision = 7;
+  uint32 page_size = 8;
+  bytes page_token = 9;
+}
+
+message DebugThread {
+  uint64 thread_id = 1;
+  string name = 2;
+}
+
+message StackFrame {
+  uint64 frame_id = 1;
+  string name = 2;
+  Location source = 3;
+}
+
+message DebugScope {
+  string name = 1;
+  uint64 variables_reference = 2;
+  bool expensive = 3;
+}
+
+message DebugVariable {
+  string name = 1;
+  string value = 2;
+  string type = 3;
+  uint64 variables_reference = 4;
+}
+
+message DebugResponse {
+  Uuid debug_session_id = 1;
+  repeated DebugThread threads = 2;
+  repeated StackFrame stack_frames = 3;
+  repeated DebugScope scopes = 4;
+  repeated DebugVariable variables = 5;
+  string evaluated_value = 6;
+  uint64 stop_epoch = 7;
+  uint64 state_revision = 8;
+  PageInfo page = 9;
+}
+
+message DebugEvaluateResult {
+  Uuid debug_session_id = 1;
+  uint64 stop_epoch = 2;
+  uint64 state_revision = 3;
+  string value = 4;
+  string type = 5;
+  uint64 variables_reference = 6;
+}
+
+enum DebugState {
+  DEBUG_STATE_UNSPECIFIED = 0;
+  DEBUG_STATE_STARTING = 1;
+  DEBUG_STATE_RUNNING = 2;
+  DEBUG_STATE_STOPPED = 3;
+  DEBUG_STATE_TERMINATED = 4;
+  DEBUG_STATE_FAILED = 5;
+}
+
+message DebugStateChanged {
+  Uuid debug_session_id = 1;
+  DebugState state = 2;
+  uint64 stopped_thread_id = 3;
+  string safe_reason = 4;
+  uint64 stop_epoch = 5;
+  uint64 state_revision = 6;
+}
+
+message DebugSnapshot {
+  Uuid debug_session_id = 1;
+  DebugState state = 2;
+  uint64 stop_epoch = 3;
+  uint64 state_revision = 4;
+  uint64 stopped_thread_id = 5;
+  repeated DebugThread bounded_threads = 6;
+  LeaseState control_lease = 7;
+  PublicError terminal_error = 8;
+}
+
+message DebugOutput {
+  Uuid debug_session_id = 1;
+  string category = 2;
+  string output = 3;
+  Location source = 4;
+}
+
+message DebugEvent {
+  // Lease changes use the single typed ServerEvent.lease route.
+  reserved 3;
+  reserved "control_lease";
+  oneof event {
+    DebugStateChanged state = 1;
+    DebugOutput output = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Testing
+// ---------------------------------------------------------------------------
+
+enum TestItemState {
+  TEST_ITEM_STATE_UNSPECIFIED = 0;
+  TEST_ITEM_STATE_IDLE = 1;
+  TEST_ITEM_STATE_QUEUED = 2;
+  TEST_ITEM_STATE_RUNNING = 3;
+  TEST_ITEM_STATE_PASSED = 4;
+  TEST_ITEM_STATE_FAILED = 5;
+  TEST_ITEM_STATE_SKIPPED = 6;
+  TEST_ITEM_STATE_ERRORED = 7;
+}
+
+message TestItem {
+  string test_id = 1;
+  string parent_test_id = 2;
+  string label = 3;
+  WorkspacePath path = 4;
+  Range range = 5;
+  bool expandable = 6;
+  TestItemState state = 7;
+  uint64 duration_ms = 8;
+  string message = 9;
+}
+
+message TestingSnapshot {
+  Uuid controller_id = 1;
+  string label = 2;
+  uint64 revision = 3;
+  repeated TestItem items = 4;
+  repeated TestRunState active_runs = 5;
+}
+
+enum TestActionKind {
+  TEST_ACTION_KIND_UNSPECIFIED = 0;
+  TEST_ACTION_KIND_DISCOVER = 1;
+  TEST_ACTION_KIND_RUN = 2;
+  TEST_ACTION_KIND_DEBUG = 3;
+  TEST_ACTION_KIND_CANCEL = 4;
+}
+
+message TestingCommand {
+  CommandMeta meta = 1;
+  Uuid controller_id = 2;
+  TestActionKind action = 3;
+  repeated string test_ids = 4;
+  string profile_id = 5;
+  Uuid test_run_id = 6;
+  uint64 workbench_control_lease_epoch = 7;
+}
+
+message TestingPageRequest {
+  Uuid controller_id = 1;
+  uint64 expected_revision = 2;
+  string parent_test_id = 3;
+  uint32 page_size = 4;
+  bytes page_token = 5;
+}
+
+message TestingPageResponse {
+  Uuid controller_id = 1;
+  uint64 revision = 2;
+  string parent_test_id = 3;
+  repeated TestItem items = 4;
+  PageInfo page = 5;
+}
+
+message TestRunState {
+  Uuid controller_id = 1;
+  Uuid test_run_id = 2;
+  TestItemState state = 3;
+  uint64 started_unix_ms = 4;
+  uint64 finished_unix_ms = 5;
+}
+
+message TestItemsUpserted {
+  Uuid controller_id = 1;
+  uint64 revision = 2;
+  repeated TestItem items = 3;
+}
+
+message TestItemsRemoved {
+  Uuid controller_id = 1;
+  uint64 revision = 2;
+  repeated string test_ids = 3;
+}
+
+message TestingResetRequired {
+  Uuid controller_id = 1;
+  uint64 new_revision = 2;
+  string safe_reason = 3;
+}
+
+message TestingEvent {
+  oneof event {
+    TestItemsUpserted upserted = 1;
+    TestItemsRemoved removed = 2;
+    TestRunState run = 3;
+    TestingResetRequired reset = 4;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent tasks and approvals
+// ---------------------------------------------------------------------------
+
+enum AgentTaskState {
+  AGENT_TASK_STATE_UNSPECIFIED = 0;
+  AGENT_TASK_STATE_QUEUED = 1;
+  AGENT_TASK_STATE_RUNNING = 2;
+  AGENT_TASK_STATE_WAITING_APPROVAL = 3;
+  AGENT_TASK_STATE_APPLYING = 4;
+  AGENT_TASK_STATE_SUCCEEDED = 5;
+  AGENT_TASK_STATE_FAILED = 6;
+  AGENT_TASK_STATE_CANCELLED = 7;
+}
+
+message StartAgentTask {
+  CommandMeta meta = 1;
+  string provider_id = 2;
+  string model_id = 3;
+  string prompt = 4;
+  repeated Uuid context_document_ids = 5;
+  uint64 max_tool_calls = 6;
+  uint64 max_output_tokens = 7;
+}
+
+message SendAgentMessage {
+  CommandMeta meta = 1;
+  Uuid agent_task_id = 2;
+  string message = 3;
+}
+
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  APPROVAL_DECISION_APPROVE_ONCE = 1;
+  APPROVAL_DECISION_DENY = 2;
+}
+
+message ToolApprovalResponse {
+  CommandMeta meta = 1;
+  Uuid agent_task_id = 2;
+  Uuid tool_call_id = 3;
+  Uuid approval_id = 4;
+  Digest exact_arguments_digest = 5;
+  repeated LeaseFence lease_fences = 6;
+  ApprovalDecision decision = 7;
+}
+
+message ApplyAgentCandidate {
+  CommandMeta meta = 1;
+  Uuid agent_task_id = 2;
+  Uuid candidate_id = 3;
+  repeated LeaseFence lease_fences = 4;
+  Digest expected_edit_digest = 5;
+}
+
+message AgentCommand {
+  oneof command {
+    StartAgentTask start = 1;
+    SendAgentMessage send_message = 2;
+    ToolApprovalResponse tool_approval = 3;
+    ApplyAgentCandidate apply_candidate = 4;
+  }
+}
+
+message AgentTaskSnapshot {
+  Uuid agent_task_id = 1;
+  Uuid operation_id = 2;
+  AgentTaskState state = 3;
+  string provider_id = 4;
+  string model_id = 5;
+  uint32 completed_tool_calls = 6;
+  repeated AgentTranscriptEntry transcript = 7;
+  repeated AgentToolCall pending_tool_calls = 8;
+  repeated ToolApprovalRequest pending_approvals = 9;
+  repeated AgentCandidateDescriptor candidates = 10;
+  PublicError terminal_error = 11;
+}
+
+message AgentTaskStateChanged {
+  Uuid agent_task_id = 1;
+  AgentTaskState state = 2;
+  uint32 completed_tool_calls = 3;
+  PublicError terminal_error = 4;
+}
+
+enum AgentTranscriptRole {
+  AGENT_TRANSCRIPT_ROLE_UNSPECIFIED = 0;
+  AGENT_TRANSCRIPT_ROLE_USER = 1;
+  AGENT_TRANSCRIPT_ROLE_ASSISTANT = 2;
+  AGENT_TRANSCRIPT_ROLE_TOOL = 3;
+  AGENT_TRANSCRIPT_ROLE_SYSTEM = 4;
+}
+
+message AgentTranscriptEntry {
+  Uuid entry_id = 1;
+  AgentTranscriptRole role = 2;
+  string safe_markdown = 3;
+  int64 created_unix_ms = 4;
+}
+
+message AgentTextDelta {
+  Uuid agent_task_id = 1;
+  string markdown_delta = 2;
+}
+
+enum ToolRisk {
+  TOOL_RISK_UNSPECIFIED = 0;
+  TOOL_RISK_READ_ONLY = 1;
+  TOOL_RISK_WORKSPACE_WRITE = 2;
+  TOOL_RISK_COMMAND_EXECUTION = 3;
+  TOOL_RISK_NETWORK = 4;
+  TOOL_RISK_SECRET = 5;
+  TOOL_RISK_EXTERNAL_SIDE_EFFECT = 6;
+}
+
+message AgentToolCall {
+  Uuid agent_task_id = 1;
+  Uuid tool_call_id = 2;
+  string tool_id = 3;
+  // Display form is redacted. Exact arguments never enter replayable streams.
+  ObjectValue redacted_display_arguments = 4;
+  Digest exact_arguments_digest = 5;
+  repeated ToolRisk risks = 6;
+  string safe_summary = 7;
+  int64 deadline_unix_ms = 8;
+}
+
+message ToolApprovalRequest {
+  Uuid agent_task_id = 1;
+  Uuid tool_call_id = 2;
+  Uuid approval_id = 3;
+  string tool_id = 4;
+  Digest exact_arguments_digest = 5;
+  repeated ToolRisk risks = 6;
+  string safe_summary = 7;
+  repeated LeaseFence required_lease_fences = 8;
+  int64 expires_unix_ms = 9;
+}
+
+message AgentToolSucceeded {
+  string safe_summary = 1;
+}
+
+message AgentToolResult {
+  Uuid agent_task_id = 1;
+  Uuid tool_call_id = 2;
+  oneof outcome {
+    AgentToolSucceeded succeeded = 3;
+    PublicError failed = 4;
+  }
+}
+
+message AgentCandidateDescriptor {
+  Uuid agent_task_id = 1;
+  Uuid candidate_id = 2;
+  string summary_markdown = 3;
+  Digest edit_digest = 4;
+  repeated WorkspacePath affected_paths = 5;
+}
+
+message GetAgentCandidateRequest {
+  Uuid agent_task_id = 1;
+  Uuid candidate_id = 2;
+  Digest expected_edit_digest = 3;
+}
+
+message AgentCandidateEdit {
+  AgentCandidateDescriptor descriptor = 1;
+  WorkspaceEdit edit = 2;
+}
+
+message AgentEvent {
+  oneof event {
+    AgentTaskStateChanged state = 1;
+    AgentTextDelta text = 2;
+    AgentToolCall tool_call = 3;
+    ToolApprovalRequest approval = 4;
+    AgentToolResult tool_result = 5;
+    AgentCandidateDescriptor candidate = 6;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tasks and output channels
+// ---------------------------------------------------------------------------
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_QUEUED = 1;
+  TASK_STATE_RUNNING = 2;
+  TASK_STATE_SUCCEEDED = 3;
+  TASK_STATE_FAILED = 4;
+  TASK_STATE_CANCELLED = 5;
+}
+
+message RunTask {
+  CommandMeta meta = 1;
+  string task_definition_id = 2;
+  string display_name = 3;
+  ObjectValue bounded_inputs = 4;
+  uint64 workbench_control_lease_epoch = 5;
+}
+
+message TerminateTask {
+  CommandMeta meta = 1;
+  Uuid task_id = 2;
+  uint64 workbench_control_lease_epoch = 3;
+}
+
+message TaskCommand {
+  oneof command {
+    RunTask run = 1;
+    TerminateTask terminate = 2;
+  }
+}
+
+message TaskSnapshot {
+  Uuid task_id = 1;
+  Uuid operation_id = 2;
+  Uuid terminal_id = 3;
+  string task_definition_id = 4;
+  string display_name = 5;
+  TaskState state = 6;
+  oneof terminal_outcome {
+    int32 exit_code = 7;
+    PublicError failure = 8;
+  }
+}
+
+message TaskEvent {
+  TaskSnapshot current = 1;
+}
+
+enum OutputAction {
+  OUTPUT_ACTION_UNSPECIFIED = 0;
+  OUTPUT_ACTION_SHOW = 1;
+  OUTPUT_ACTION_HIDE = 2;
+  OUTPUT_ACTION_CLEAR = 3;
+}
+
+message OutputCommand {
+  CommandMeta meta = 1;
+  Uuid output_channel_id = 2;
+  OutputAction action = 3;
+  uint64 workbench_control_lease_epoch = 4;
+}
+
+message OutputSnapshot {
+  OutputChannelDescriptor descriptor = 1;
+  bytes utf8_content = 2;
+  uint64 base_byte_offset = 3;
+  uint64 next_byte_offset = 4;
+  bool truncated = 5;
+  bool visible = 6;
+}
+
+message OutputChunk {
+  Uuid output_channel_id = 1;
+  uint64 byte_offset = 2;
+  bytes utf8_data = 3;
+  uint64 next_byte_offset = 4;
+}
+
+message OutputReplaced {
+  Uuid output_channel_id = 1;
+  bytes bounded_utf8_content = 2;
+  uint64 next_byte_offset = 3;
+}
+
+message OutputVisibilityChanged {
+  Uuid output_channel_id = 1;
+  bool visible = 2;
+}
+
+message OutputCleared {
+  Uuid output_channel_id = 1;
+  uint64 next_byte_offset = 2;
+}
+
+message OutputEvent {
+  oneof event {
+    OutputChunk appended = 1;
+    OutputReplaced replaced = 2;
+    OutputCleared cleared = 3;
+    OutputVisibilityChanged visibility = 4;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Long operations and export
+// ---------------------------------------------------------------------------
+
+enum OperationKind {
+  OPERATION_KIND_UNSPECIFIED = 0;
+  OPERATION_KIND_WORKSPACE_START = 1;
+  OPERATION_KIND_WORKSPACE_STOP = 2;
+  OPERATION_KIND_IMPORT = 3;
+  OPERATION_KIND_EXPORT = 4;
+  OPERATION_KIND_TERMINAL = 5;
+  OPERATION_KIND_TASK = 6;
+  OPERATION_KIND_DEBUG = 7;
+  OPERATION_KIND_TEST = 8;
+  OPERATION_KIND_AGENT = 9;
+  OPERATION_KIND_INDEX = 10;
+  OPERATION_KIND_RUNTIME_UPDATE = 11;
+  OPERATION_KIND_MIGRATION = 12;
+  OPERATION_KIND_DOCUMENT_SAVE = 13;
+  OPERATION_KIND_WORKSPACE_EDIT = 14;
+  OPERATION_KIND_SCM = 15;
+  OPERATION_KIND_EXTENSION_COMMAND = 16;
+}
+
+enum OperationState {
+  OPERATION_STATE_UNSPECIFIED = 0;
+  OPERATION_STATE_QUEUED = 1;
+  OPERATION_STATE_RUNNING = 2;
+  OPERATION_STATE_CANCELLING = 3;
+  OPERATION_STATE_SUCCEEDED = 4;
+  OPERATION_STATE_FAILED = 5;
+  OPERATION_STATE_CANCELLED = 6;
+  OPERATION_STATE_DEADLINE_EXCEEDED = 7;
+}
+
+message OperationProgress {
+  string phase = 1;
+  uint64 completed_units = 2;
+  uint64 total_units = 3;
+  string unit = 4;
+  string safe_message = 5;
+}
+
+message OperationResourceIds {
+  oneof resource {
+    Uuid workspace_id = 1;
+    Uuid terminal_id = 2;
+    Uuid task_id = 3;
+    Uuid debug_session_id = 4;
+    Uuid test_run_id = 5;
+    Uuid agent_task_id = 6;
+    Uuid export_id = 7;
+  }
+}
+
+message OperationSucceeded {
+  reserved 3;
+  oneof result {
+    CommandCompleted empty = 1;
+    OperationResourceIds resource = 2;
+  }
+}
+
+message OperationCancelled {
+  string safe_reason = 1;
+}
+
+message OperationDeadlineExceeded {
+  string phase = 1;
+}
+
+message OperationSnapshot {
+  Uuid operation_id = 1;
+  OperationKind kind = 2;
+  OperationState state = 3;
+  OperationProgress progress = 4;
+  int64 started_unix_ms = 5;
+  int64 updated_unix_ms = 6;
+  int64 terminal_unix_ms = 7;
+  // Required iff state is terminal; exactly one branch must agree with state.
+  oneof terminal_outcome {
+    OperationSucceeded succeeded = 8;
+    PublicError failed = 9;
+    OperationCancelled cancelled = 10;
+    OperationDeadlineExceeded deadline_exceeded = 11;
+  }
+  // Monotonic within the operation. Cancellation must name the exact observed
+  // revision so cancel-vs-commit has one durable winner.
+  uint64 state_revision = 12;
+}
+
+message GetOperation {
+  Uuid operation_id = 1;
+}
+
+message CancelOperation {
+  CommandMeta meta = 1;
+  Uuid operation_id = 2;
+  uint64 expected_state_revision = 3;
+}
+
+message OperationCommand {
+  oneof command {
+    GetOperation get = 1;
+    CancelOperation cancel = 2;
+  }
+}
+
+message OperationEvent {
+  OperationSnapshot current = 1;
+}
+
+enum ExportFormat {
+  EXPORT_FORMAT_UNSPECIFIED = 0;
+  EXPORT_FORMAT_ZIP = 1;
+  EXPORT_FORMAT_TAR_ZSTD = 2;
+  EXPORT_FORMAT_GIT_BUNDLE = 3;
+}
+
+enum ExportState {
+  EXPORT_STATE_UNSPECIFIED = 0;
+  EXPORT_STATE_QUEUED = 1;
+  EXPORT_STATE_ADMITTING = 2;
+  EXPORT_STATE_EXECUTION_FROZEN = 3;
+  EXPORT_STATE_RECONCILED = 4;
+  EXPORT_STATE_COORDINATOR_FROZEN = 5;
+  EXPORT_STATE_COPYING = 6;
+  EXPORT_STATE_PUBLISHED = 7;
+  EXPORT_STATE_UNFREEZING = 8;
+  EXPORT_STATE_SUCCEEDED = 9;
+  EXPORT_STATE_FAILED = 10;
+  EXPORT_STATE_CANCELLED = 11;
+  EXPORT_STATE_EXPIRED = 12;
+  EXPORT_STATE_VOLUME_LOCKED = 13;
+  EXPORT_STATE_LOCK_RELEASED = 14;
+}
+
+message CreateExport {
+  CommandMeta meta = 1;
+  ExportFormat format = 2;
+  bool include_ignored_files = 3;
+  bool include_untracked_files = 4;
+  uint64 requested_max_bytes = 5;
+}
+
+message CancelExport {
+  CommandMeta meta = 1;
+  Uuid export_id = 2;
+}
+
+message RequestDownloadExchange {
+  CommandMeta meta = 1;
+  Uuid export_id = 2;
+}
+
+message ExportCommand {
+  oneof command {
+    CreateExport create = 1;
+    CancelExport cancel = 2;
+    RequestDownloadExchange request_download = 3;
+  }
+}
+
+message ExportManifestSummary {
+  uint32 schema_version = 1;
+  ExportFormat format = 2;
+  uint64 file_count = 3;
+  uint64 uncompressed_bytes = 4;
+  uint64 artifact_bytes = 5;
+  Digest artifact_digest = 6;
+  Digest tree_digest = 7;
+  uint64 workspace_generation = 8;
+  uint64 workspace_high_watermark = 9;
+  bool contains_working_tree = 10;
+  bool contains_git_history = 11;
+}
+
+message ExportSnapshot {
+  Uuid export_id = 1;
+  Uuid operation_id = 2;
+  ExportState state = 3;
+  ExportManifestSummary manifest = 4;
+  int64 created_unix_ms = 5;
+  int64 expires_unix_ms = 6;
+  PublicError terminal_error = 7;
+}
+
+message DownloadExchangeDescriptor {
+  Uuid export_id = 1;
+  // One-time token is exchanged over HTTPS; it is not the Range token.
+  bytes one_time_exchange_token = 2;
+  string exchange_path = 3;
+  int64 exchange_expires_unix_ms = 4;
+  uint64 artifact_size_bytes = 5;
+  Digest artifact_digest = 6;
+}
+
+message ExportEvent {
+  ExportSnapshot current = 1;
+}
+
+// Canonical protobuf serialization of exactly one payload is chunked by
+// ServerSnapshot. Payloads are never embedded directly in an event frame.
+message SnapshotPayload {
+  reserved 9, 14;
+  oneof payload {
+    WorkspaceSnapshot workspace = 1;
+    DocumentSnapshotPayload document = 2;
+    ContributionSnapshot contributions = 3;
+    TerminalSnapshot terminal = 4;
+    ScmSnapshot scm = 5;
+    DebugSnapshot debug = 6;
+    TestingSnapshot testing = 7;
+    AgentTaskSnapshot agent = 8;
+    OperationSnapshot operation = 10;
+    ExportSnapshot export = 11;
+    TaskSnapshot task = 12;
+    OutputSnapshot output = 13;
+  }
+}
+
+// Request-result transfers are deliberately separate from stream snapshots:
+// they have no StreamKey, generation, high-watermark or SnapshotInstalled.
+message ResultPayload {
+  oneof payload {
+    AgentCandidateEdit agent_candidate = 1;
+    WorkspaceEditCandidatePayload workspace_edit = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Direction-specific session frames
+// ---------------------------------------------------------------------------
+
+message RequestMeta {
+  Uuid request_id = 1;
+  int64 deadline_unix_ms = 2;
+}
+
+message ClientRequest {
+  // Required and unique within the client incarnation. Every request receives
+  // exactly one terminal response, even when earlier response parts were sent.
+  RequestMeta meta = 1;
+  reserved 10;
+  oneof request {
+    WorkspaceCommand workspace_command = 11;
+    ListDirectoryRequest list_directory = 12;
+    FileMutationCommand file_mutation = 13;
+    SearchRequest search = 14;
+    SetUserWorkspaceState set_user_state = 15;
+    OpenDocumentRequest open_document = 16;
+    CloseDocumentRequest close_document = 17;
+    EditBatch edit_batch = 18;
+    DocumentCommand document_command = 19;
+    LeaseCommand lease_command = 20;
+    WorkbenchContextUpdate workbench_context = 21;
+    ExecuteCommandRequest execute_command = 22;
+    TreeViewRequest tree_view = 23;
+    QuickPickPageRequest quick_pick_page = 24;
+    LanguageRequest language_request = 25;
+    TerminalCommand terminal_command = 26;
+    ScmCommand scm_command = 27;
+    ScmPageRequest scm_page = 28;
+    DebugCommand debug_command = 29;
+    DebugRequest debug_request = 30;
+    TestingCommand testing_command = 31;
+    TestingPageRequest testing_page = 32;
+    AgentCommand agent_command = 33;
+    GetAgentCandidateRequest get_agent_candidate = 34;
+    TaskCommand task_command = 35;
+    OutputCommand output_command = 36;
+    OperationCommand operation_command = 37;
+    ExportCommand export_command = 38;
+    WorkspaceEditCommand workspace_edit_command = 39;
+  }
+}
+
+message ClientServerResponse {
+  oneof response {
+    UiResponse ui = 1;
+  }
+}
+
+message ClientControl {
+  oneof control {
+    Heartbeat heartbeat = 1;
+    StreamAcknowledgements acknowledgements = 2;
+    SnapshotInstalled snapshot_installed = 3;
+    RequestStreamSnapshot request_snapshot = 4;
+    // Fire-and-forget control. The target request itself receives the single
+    // terminal cancelled/too-late response.
+    CancelRequest cancel_request = 5;
+    CancelSnapshotTransfer cancel_snapshot_transfer = 6;
+    CancelResultTransfer cancel_result_transfer = 7;
+  }
+}
+
+message ClientFrame {
+  // Must equal the negotiated major (or the offered major for ClientHello).
+  uint32 protocol_major = 1;
+  // Zero only for hello. CommandMeta must carry this identical generation.
+  uint64 expected_workspace_generation = 2;
+  oneof delivery {
+    ClientHello hello = 10;
+    ClientRequest request = 11;
+    ClientServerResponse server_response = 12;
+    ClientControl control = 13;
+  }
+}
+
+enum ResponseDisposition {
+  RESPONSE_DISPOSITION_UNSPECIFIED = 0;
+  RESPONSE_DISPOSITION_PARTIAL = 1;
+  RESPONSE_DISPOSITION_TERMINAL = 2;
+}
+
+message ResponseMeta {
+  Uuid in_reply_to = 1;
+  uint32 part_index = 2;
+  // Exactly one TERMINAL response per request. No later part is legal.
+  ResponseDisposition disposition = 3;
+  uint64 observed_workspace_generation = 4;
+}
+
+message ServerResponse {
+  ResponseMeta meta = 1;
+  // Removed before v1 freeze: complete workspace/export state is delivered by
+  // typed stream snapshots; workspace-edit descriptors are carried inside
+  // LanguageResponse or fetched through ResultTransfer. Names/numbers cannot
+  // be reused.
+  reserved 11, 15, 27, 31;
+  reserved "workspace", "export", "workspace_edit_reference";
+  oneof response {
+    PublicError error = 10;
+    ListDirectoryResponse list_directory = 12;
+    FileMutationResult file_mutation = 13;
+    SearchResultChunk search_result = 14;
+    EditAck edit_ack = 16;
+    LeaseState lease_state = 17;
+    ExecuteCommandResponse execute_command = 18;
+    TreeViewResponse tree_view = 19;
+    QuickPickPageResponse quick_pick_page = 20;
+    LanguageResponse language = 21;
+    ScmPageResponse scm_page = 22;
+    DebugResponse debug = 23;
+    DebugEvaluateResult debug_evaluate = 24;
+    TestingPageResponse testing_page = 25;
+    OperationSnapshot operation = 26;
+    DownloadExchangeDescriptor download_exchange = 28;
+    CommandAccepted command_accepted = 29;
+    SnapshotTransferStarted snapshot_started = 30;
+    WorkspaceEditApplied workspace_edit_applied = 32;
+    ResultTransferStarted result_transfer_started = 33;
+  }
+}
+
+message ServerEvent {
+  // Validator requires meta.key identity to equal the resource identity inside
+  // the selected payload; mismatches are protocol violations, never rerouted.
+  StreamEventMeta meta = 1;
+  oneof event {
+    WorkspaceEvent workspace = 10;
+    DocumentEvent document = 11;
+    LeaseState lease = 12;
+    ContributionDelta contribution = 13;
+    TreeViewInvalidated tree_view = 14;
+    DiagnosticSet diagnostics = 15;
+    SemanticTokensEvent semantic_tokens = 16;
+    TerminalEvent terminal = 17;
+    ScmEvent scm = 18;
+    DebugEvent debug = 19;
+    TestingEvent testing = 20;
+    AgentEvent agent = 21;
+    OperationEvent operation = 22;
+    ExportEvent export = 23;
+    TaskEvent task = 24;
+    OutputEvent output = 25;
+  }
+}
+
+message ServerSnapshot {
+  // key/generation/payload_kind/decoded resource ID must match the registry's
+  // one-to-one identity matrix. Only SnapshotEnd followed by exact
+  // SnapshotInstalled may advance the high-water frontier.
+  SnapshotTransferMeta meta = 1;
+  reserved 2;
+  oneof part {
+    SnapshotBegin begin = 10;
+    SnapshotChunk chunk = 11;
+    SnapshotEnd end = 12;
+    SnapshotAborted aborted = 13;
+  }
+}
+
+message ServerResultTransfer {
+  ResultTransferMeta meta = 1;
+  oneof part {
+    ResultBegin begin = 10;
+    ResultChunk chunk = 11;
+    ResultEnd end = 12;
+    ResultAborted aborted = 13;
+  }
+}
+
+message ServerRequest {
+  oneof request {
+    UiRequest ui = 1;
+  }
+}
+
+message SessionFailure {
+  PublicError error = 1;
+  bool close_connection = 2;
+}
+
+message ServerControl {
+  oneof control {
+    ServerHello hello = 1;
+    Heartbeat heartbeat = 2;
+    StreamReset stream_reset = 3;
+    CancelUiRequest cancel_ui_request = 4;
+    Notification notification = 5;
+    ProgressUpdate progress = 6;
+    SessionFailure session_failure = 7;
+  }
+}
+
+message ServerFrame {
+  uint32 protocol_major = 1;
+  // The delivery branch is the complete routing contract. Validators reject
+  // empty branches and domain bodies carried through the wrong branch.
+  oneof delivery {
+    ServerResponse response = 10;
+    ServerEvent event = 11;
+    ServerSnapshot snapshot = 12;
+    ServerRequest request = 13;
+    ServerControl control = 14;
+    ServerResultTransfer result_transfer = 15;
+  }
+}
