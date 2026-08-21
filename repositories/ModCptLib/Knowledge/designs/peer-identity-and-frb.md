@@ -4,7 +4,7 @@
 > **现行授权**：唯一可执行路线是 [`ROADMAP.md`](../ROADMAP.md) 的 M0-M7；身份、设备和授权边界以[身份与寻址 v2](identity-and-addressing-v2.md)为准。本文不得独立授权代码、schema、FRB API、协议或阶段实施。
 > **v2 取代说明（2026-07-26）**：本文的单 user/session 归并、IdentityFrame 身份绑定与公开 raw-session FRB API 是 v1 历史方案；后续实现不得依赖这些路径建立 v2 授权。
 > **历史来源**：`rewrite/auth-flow` 分支整合此前讨论：
-> - 第一轮：peer 去重修复（[`PEER_DEDUP_FIX.md`](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/designs/PEER_DEDUP_FIX.md)）—— 临时层修补
+> - 第一轮：peer 去重修复（`PEER_DEDUP_FIX.md`（源提交中无对应文件，仅保留历史引用名））—— 临时层修补
 > - 第二轮：去重加速（布隆过滤器 / HashMap / 遍历 / 归并查询入口）的取舍
 > - 第三轮：Rust 中心化组件（`ContactRegistry`）—— 身份下沉
 > - 第四轮：FRB 层梳理与重写 —— userId 一等公民 + 推模式
@@ -545,11 +545,11 @@ pub enum NodeEvent {
 
 | 归档文档 | 对应本文章节 | 状态 |
 |----------|------------|------|
-| [`PEER_DEDUP_FIX.md`](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/designs/PEER_DEDUP_FIX.md) | §4 阶段 A | 被本文 §4 取代（原 §3.2 的 HashMap 索引改为遍历，见 §2.1 决策）；原 3 层防线细节保留备查 |
+| `PEER_DEDUP_FIX.md`（源提交中无对应文件，仅保留历史引用名） | §4 阶段 A | 被本文 §4 取代（原 §3.2 的 HashMap 索引改为遍历，见 §2.1 决策）；原 3 层防线细节保留备查 |
 | 第二轮讨论（布隆/HashMap/遍历/归并入口） | §2.1 技术决策 | 整合为 §2.1 |
 | 第三轮讨论（ContactRegistry 中心化） | §5 阶段 B | 整合为 §5 |
 | [frb-api-evolution.md](frb-api-evolution.md) | §6 阶段 C | 被本文 §6 压缩引用，FRB 细节（模块重组/codegen 操作/子句柄设计）见完整配套文档 |
-| [`DEFECT_ANALYSIS.md`](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/designs/DEFECT_ANALYSIS.md) | §7 未来路径 | 缺陷编号（D1/D2/D3/D5/D6）对应本文 §7 |
+| `DEFECT_ANALYSIS.md`（源提交中无对应文件，仅保留历史引用名） | §7 未来路径 | 缺陷编号（D1/D2/D3/D5/D6）对应本文 §7 |
 | [mock-removal.md](mock-removal.md) | §7.1 近期 | Mock 移除独立指南 |
 | [login-lifecycle-rewrite.md](login-lifecycle-rewrite.md) | §7.1（已完成） | 登录流程代码级实施版，已实施（参见 [登录重写日志](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/logs/2026-07-07-auth-flow-rewrite.md)） |
 
