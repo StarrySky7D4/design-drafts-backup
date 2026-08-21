@@ -73,7 +73,7 @@ QUIC connection
 
 `P2PNode` 实现 `Drop`，用于关闭 endpoint 并让接收任务退出；但产品代码在已知的主动结束点仍必须调用 `P2PChannel::close()`。仅依赖析构无法表达远端关闭语义，也不能替代上层清理 `DataCtl`、FRB 订阅或 UI 状态。
 
-可靠流以 EOF 为消息边界：发送路径结束发送方向，接收路径完整读取且受上限保护。文件控制器因此可以乱序重组块，但大文件仍受内存重组模型限制，见 [Defects](DEFECTS.md)。
+可靠流以 EOF 为消息边界：发送路径结束发送方向，接收路径完整读取且受上限保护。文件控制器因此可以乱序重组块，但大文件仍受内存重组模型限制，见 [Defects](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/DEFECTS.md)。
 
 ## 5. 线路协议与保留槽
 
@@ -116,7 +116,7 @@ direct-text 使用 Envelope content kind `3`（payload-free bootstrap）和 `4`�
 
 `modcpt_server` 提供单向 TLS 的 JSON-over-QUIC RPC。用户通过 account 或 `user_id` 登录，密码使用 Argon2id 哈希，登录返回随机 token。地址簿接口 `set_addr` 以 token 认证并写入最后已知可拨号地址；它不表示在线、不启动 heartbeat，也不提供可达性保证。服务端还持久保存 assertion signer，并可为 active credential 签发 `{user_id, signing key version, P2P cert hash, capability, continuity, validity}` 绑定；客户端必须通过管理员分发的 `ServerProfile` 同时 pin 账号 TLS 证书和 assertion signer 后才验证该 assertion。core 已提供 `open_verified_session`/`connect_verified`，将 assertion 绑定的 exact DER 用于单次 QUIC 拨号及 standby；FRB/Flutter 尚未编排该路径。
 
-Flutter 的 `completeLogin()` 统一完成认证、同机登录锁、节点启动、FRB 快照句柄缓存、服务器客户端绑定、事件订阅和会话持久化。`publishPresence()` 是保留的方法名，实际执行一次 `set_addr` 写入。详细 RPC、状态转换、部署和故障排查见 [账号与发现指南](guides/account-and-discovery.md)。
+Flutter 的 `completeLogin()` 统一完成认证、同机登录锁、节点启动、FRB 快照句柄缓存、服务器客户端绑定、事件订阅和会话持久化。`publishPresence()` 是保留的方法名，实际执行一次 `set_addr` 写入。详细 RPC、状态转换、部署和故障排查见 [账号与发现指南](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/guides/account-and-discovery.md)。
 
 身份与寻址正在进行协议/数据 major upgrade。M3-01 至 M3-07 已完成并满足 M3 gate；M3-08 freshness/session-registry 强化与 M4 runtime 仍等待 reviewer/CI。已实现范围包括 `modcpt_pki`、RealmManifest、server v2 store/RPC、client local-v2、DeviceHello、`/3` trusted session gate、显式 cutover-v2，以及 M4-05 realm-bound signed public content-prekey publish/claim。服务器支持双端点：v1（端口 8421，ALPN `modcpt-server/1`，单向 TLS）和 v2（端口 8422，ALPN `modcpt-server/2`，mTLS）。管理员执行 `init-realm` 创建完整 v2 bundle（RealmRoot、signed manifest、CA、StoreV2），执行 `cutover` 后归档 v1 identity 数据且新 v1 RPC 返回 `upgrade_required`。30 天回滚窗口后 cutover 永久锁定。客户端可通过 v2 provision 流程（CSR + Ed25519 持钥证明）获取签名客户端证书存入 LocalV2Store。所有私钥永不上传，v1 数据绝不导入 v2。完整目标和阶段以[身份与寻址 v2](designs/identity-and-addressing-v2.md)为准。
 
@@ -135,7 +135,7 @@ Flutter 的 `completeLogin()` 统一完成认证、同机登录锁、节点启�
 
 - Rust 通过有界通道、信号量和 `try_send` 抑制无界积压；满载时哪些帧可丢弃必须由领域层明确，而不是隐式阻塞 gateway。
 - `DataRouter`、会话路由和 UI 存储各自有同步原语；不得在持锁状态执行网络 I/O 或长时间数据库操作。
-- SQLite 是本地状态的当前实现。数据库 schema 演进、文件内存重组、FRB 全局锁、token 落盘和服务器阻塞路径仍有明确缺陷，均已登记在 [Defects](DEFECTS.md)。
+- SQLite 是本地状态的当前实现。数据库 schema 演进、文件内存重组、FRB 全局锁、token 落盘和服务器阻塞路径仍有明确缺陷，均已登记在 [Defects](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/DEFECTS.md)。
 - 调试 harness 是诊断工具。它覆盖证书、公告板、直连和信令控制面，不应作为正式回归门或生产部署规范。
 
 ## 9. 文档边界
@@ -143,4 +143,4 @@ Flutter 的 `completeLogin()` 统一完成认证、同机登录锁、节点启�
 - 本文是当前行为和边界的项目级入口；已实现、保留与废弃的协议/schema/迁移/错误类别见[协议注册表](PROTOCOL_REGISTRY.md)，跨边界变更、兼容与发布门见[协议生命周期](PROTOCOL_LIFECYCLE.md)。
 - [协议参考](protocol-reference.md) 保留根架构文档迁入后的字节级协议、控制时序和历史测试细节；其中与 relay、STUN 或旧在线状态相关的段落不描述当前能力。
 - `Knowledge/rust/`、`Knowledge/flutter/`、`Knowledge/debug-harness/` 是源码级说明；源文件改动时必须同步。
-- [Roadmap](ROADMAP.md) 只登记尚未完成的方向和非目标；[Defects](DEFECTS.md) 只登记活跃风险；[logs/](logs/) 保存完整日期记录。
+- [Roadmap](ROADMAP.md) 只登记尚未完成的方向和非目标；[Defects](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/DEFECTS.md) 只登记活跃风险；[logs/](https://github.com/StarrySky7D4/ModCptLib/tree/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/logs) 保存完整日期记录。

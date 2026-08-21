@@ -1,5 +1,7 @@
 # Backup Source
 
+> **Snapshot, not live documentation.** 本目录固定保存 2026-08-09 的 `master@add9e4024f8e10055508770aaf96c944aab6cceb`。截至 2026-08-21，活跃 `AutoSave` 已领先 172 个提交；当前状态见 [CURRENT_STATUS.md](CURRENT_STATUS.md)。历史快照中的“当前”“已关闭”或协议支持声明不得直接外推到最新开发线。
+
 - Source repository: <https://github.com/StarrySky7D4/ModCptLib>
 - Source branch: `master`
 - Source commit: `add9e4024f8e10055508770aaf96c944aab6cceb`
@@ -36,3 +38,14 @@
 - `LICENSE`
 
 Only selected design and licensing documents are included. Implementation code, credentials, build outputs, task dashboards, and unrelated audit logs are excluded.
+
+
+## Backup-authored files
+
+以下文件由本备份仓库维护，不是源提交中的文件：
+
+- `README.md`
+- `CURRENT_STATUS.md`
+- `BACKUP_SOURCE.md`
+
+为使选择性快照可独立浏览，少量指向未收录源文件的相对链接被改写为固定源提交的绝对 GitHub 链接；正文设计内容仍对应上述源提交。
