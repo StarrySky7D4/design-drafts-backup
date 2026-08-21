@@ -1,9 +1,9 @@
 # 登录流程混乱治理 — 具体实施方案（代码级）【已实施】
 
 > **生成时间**：2026-07-07
-> **状态**：✅ **已实施**（登录流程重构已落地并通过审查修复，见 [`Knowledge/logs/2026-07-07-auth-flow-rewrite.md`](../Knowledge/logs/2026-07-07-auth-flow-rewrite.md)）。本文为代码级实施记录，保留备查。
+> **状态**：✅ **已实施**（登录流程重构已落地并通过审查修复，见 [`Knowledge/logs/2026-07-07-auth-flow-rewrite.md`](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/logs/2026-07-07-auth-flow-rewrite.md)）。本文为代码级实施记录，保留备查。
 > **目标分支**：`rewrite/auth-flow`
-> **文档定位**：本文保留登录生命周期重写的**代码级实施记录**：改哪些文件、改成什么签名、按什么顺序改、如何验证。当前账号行为和部署以 [账号与发现指南](../guides/account-and-discovery.md) 为准。
+> **文档定位**：本文保留登录生命周期重写的**代码级实施记录**：改哪些文件、改成什么签名、按什么顺序改、如何验证。当前账号行为和部署以 [账号与发现指南](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/guides/account-and-discovery.md) 为准。
 > **性质**：完整实施记录；不要以当前架构短摘要覆盖其中的重构理由、失败处理和验证细节。
 > **核实基准**：基于当前工作区 `f042c6b` 的真实源码逐行核实（行号见下表）。
 
