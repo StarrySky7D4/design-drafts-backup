@@ -17,7 +17,7 @@
 ### Owner 与证据
 
 - `Owner` 的前半段是编号登记单写者 `M1-02`；斜线后的模块是实现事实源。它不表示未分配的人员或未来任务已经获授权。
-- 证据按 `路径::符号` 定位，避免依赖会漂移的行号。`M0-03` 与 `M0-04` 的已审阅事实分别见 [M0-03 卡](../agents_work/tasks/M0-03-p2p-bind-version.md) 和 `database.rs` 的迁移测试。
+- 证据按 `路径::符号` 定位，避免依赖会漂移的行号。`M0-03` 与 `M0-04` 的已审阅事实分别见 [M0-03 卡](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/agents_work/tasks/M0-03-p2p-bind-version.md) 和 `database.rs` 的迁移测试。
 - 本表没有分配数字型错误码。Rust enum 变体是当前稳定类别；展示文本和 FRB 的 `String` 不是可供客户端匹配的错误码。
 
 ### 变更与废弃
