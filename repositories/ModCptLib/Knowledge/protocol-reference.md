@@ -15,11 +15,11 @@
 | 项目是什么、快速开始、编译运行 | [`README.md`](../README.md) |
 | 当前系统边界、数据路径和安全约束 | [Architecture](ARCHITECTURE.md) |
 | 代码组织和逐文件说明 | [Structure](STRUCTURE.md)、[Knowledge index](README.md) |
-| 账号、联系地址簿与部署 | [账号与发现指南](guides/account-and-discovery.md) |
+| 账号、联系地址簿与部署 | [账号与发现指南](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/guides/account-and-discovery.md) |
 | 群组、房间和 FRB 演进设计 | [`designs/`](designs/) |
-| 活跃缺陷与未完成工作 | [Defects](DEFECTS.md)、[Roadmap](ROADMAP.md) |
-| 逐日实施记录 | [`logs/`](logs/) |
-| AI Agent 工作指南 | [`AGENTS.md`](../AGENTS.md) |
+| 活跃缺陷与未完成工作 | [Defects](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/DEFECTS.md)、[Roadmap](ROADMAP.md) |
+| 逐日实施记录 | [`logs/`](https://github.com/StarrySky7D4/ModCptLib/tree/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/logs) |
+| AI Agent 工作指南 | [`AGENTS.md`](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/AGENTS.md) |
 
 本文以下内容用于查阅仍存在的线路帧、控制消息和传输约束；当前模块边界以本节链接的项目级文档为准。
 
@@ -457,7 +457,7 @@ async fn two_node_session() -> (P2PNode, P2PNode, P2PChannel, P2PChannel) {
 
 ## 8. 已知待修复项（M1-M11）
 
-当前缺陷状态与关闭条件见 [`DEFECTS.md`](DEFECTS.md)。本节的历史编号仅用于理解旧测试背景。
+当前缺陷状态与关闭条件见 [`DEFECTS.md`](https://github.com/StarrySky7D4/ModCptLib/blob/add9e4024f8e10055508770aaf96c944aab6cceb/Knowledge/DEFECTS.md)。本节的历史编号仅用于理解旧测试背景。
 
 **已修复**（2026-06-28 审查后）：5 项 P0（C1-C5：TLS 互信/消息截断/资源泄漏/TURN 转发/Flutter 命令注入）+ 8 项 P1（H1-H8）+ 4 项 P2（M2/M3/M7/TurnRelay 自省）。
 
