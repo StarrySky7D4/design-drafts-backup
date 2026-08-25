@@ -23,7 +23,7 @@ repositories/
 | 分库 | 来源可见性 | 主要内容 | 许可 |
 | --- | --- | --- | --- |
 | [`decentralized-chat-architecture`](repositories/decentralized-chat-architecture/README.md) | 公开 | 系统架构、模块契约、ADR、威胁模型及未来匿名覆盖网络方案 | MIT |
-| [`ModCptLib`](repositories/ModCptLib/README.md) | 私有，已授权公开备份 | 2026-08-09 历史设计快照；另附 2026-08-21 当前状态与漂移说明 | 参见分库 `LICENSE` |
+| [`ModCptLib`](repositories/ModCptLib/README.md) | 私有，已授权公开备份 | 2026-08-09 历史设计快照；另附 2026-08-26 当前状态与漂移说明 | 参见分库 `LICENSE` |
 | [`VSCode_mobile`](repositories/VSCode_mobile/README.md) | 私有，已授权公开备份 | 项目编码方案、架构、安全模型、协议草案、路线图及 ADR | 源提交未发现根许可证，参见 `LICENSE_STATUS.md` |
 | [`NewAPI-private`](repositories/NewAPI-private/README.md) | 私有，已授权公开备份 | React → Flutter 迁移清单 | AGPL-3.0，参见分库 `LICENSE` 与 `NOTICE` |
 
@@ -48,3 +48,4 @@ repositories/
 ## License
 
 本仓库自行编写的索引与辅助文件采用 [MIT](LICENSE)。备份文档继续适用各自源仓库的许可证或权利状态；分库目录中的 `LICENSE`、`NOTICE` 或 `LICENSE_STATUS.md` 优先。
+
