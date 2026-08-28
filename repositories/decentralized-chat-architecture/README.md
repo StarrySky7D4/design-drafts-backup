@@ -50,11 +50,15 @@ Role-based Node Network
 - [首个可发布版本范围](docs/06-mvp-scope.md)
 - [风险与反模式](docs/07-risks-and-antipatterns.md)
 - [核心威胁模型](docs/08-core-threat-model.md)
+- [知识目录](Knowledge/README.md)
 - [模块化实现契约](Knowledge/modular-design/README.md)
+- [静态审查与仓库整改记录](Knowledge/2026-08-15-static-audit-repository-remediation.md)
 - [未来匿名覆盖网络](future_plan/anonymous-network-overlay/README.md)
 - [待实现清单](TODO.md)
 - [架构决策记录](adr/)
 - [修补归档](archive/2026-08-04-repository-remediation.md)
+- [安全政策](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md)
 
 ## 推荐技术栈
 
