@@ -4,7 +4,8 @@
 
 - [备份来源与收录清单](BACKUP_SOURCE.md)
 - 源仓库：<https://github.com/StarrySky7D4/VSCode_mobile>
-- 源提交：`6ec5645541d6d426b81b32139d0331be185ee7bf`
+- 基线源提交：`6ec5645541d6d426b81b32139d0331be185ee7bf`
+- 路线图刷新：`codex/m0-baseline@02174332b4c5cb8b98921be93d60474f744c48f1`（2026-08-28，本地工作树干净）
 - 许可：源仓库未发现根 `LICENSE`；详见 `LICENSE_STATUS.md`。
 
 ## 入口
