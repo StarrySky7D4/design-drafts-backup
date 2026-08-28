@@ -1,6 +1,6 @@
 # Backup Source
 
-> **Snapshot, not live documentation.** 本目录固定保存 2026-08-09 的 `master@add9e4024f8e10055508770aaf96c944aab6cceb`。截至 2026-08-26，活跃 `AutoSave@cd4f3b90cf70ad5e183df4eff121e04122458da1` 已领先 183 个提交；当前状态见 [CURRENT_STATUS.md](CURRENT_STATUS.md)。历史快照中的“当前”“已关闭”或协议支持声明不得直接外推到最新开发线。
+> **Snapshot, not live documentation.** 本目录固定保存 2026-08-09 的 `master@add9e4024f8e10055508770aaf96c944aab6cceb`。截至 2026-08-28，活跃 `AutoSave@0a248302e18b74e5b74d8263a2ccd1bfe1cfd383` 已领先 184 个提交；当前状态见 [CURRENT_STATUS.md](CURRENT_STATUS.md)。历史快照中的“当前”“已关闭”或协议支持声明不得直接外推到最新开发线。
 
 - Source repository: <https://github.com/StarrySky7D4/ModCptLib>
 - Source branch: `master`
